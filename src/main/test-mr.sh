@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-
 #
 # map-reduce tests
 #
-
 # comment this out to run the tests without the Go race detector.
 RACE=-race
 
@@ -71,16 +69,16 @@ rm -f mr-out*
 
 echo '***' Starting wc test.
 
-$TIMEOUT ../mrcoordinator ../pg*txt &
+$TIMEOUT ../mrcoordinator ../pg*txt &  > /dev/null
 pid=$!
 
 # give the coordinator time to create the sockets.
 sleep 1
 
 # start multiple workers.
-$TIMEOUT ../mrworker ../../mrapps/wc.so &
-$TIMEOUT ../mrworker ../../mrapps/wc.so &
-$TIMEOUT ../mrworker ../../mrapps/wc.so &
+$TIMEOUT ../mrworker ../../mrapps/wc.so &  > /dev/null
+$TIMEOUT ../mrworker ../../mrapps/wc.so &  > /dev/null
+$TIMEOUT ../mrworker ../../mrapps/wc.so &  > /dev/null
 
 # wait for the coordinator to exit.
 wait $pid
@@ -111,12 +109,12 @@ rm -f mr-out*
 
 echo '***' Starting indexer test.
 
-$TIMEOUT ../mrcoordinator ../pg*txt &
+$TIMEOUT ../mrcoordinator ../pg*txt &  > /dev/null
 sleep 1
 
 # start multiple workers
-$TIMEOUT ../mrworker ../../mrapps/indexer.so &
-$TIMEOUT ../mrworker ../../mrapps/indexer.so
+$TIMEOUT ../mrworker ../../mrapps/indexer.so &  > /dev/null
+$TIMEOUT ../mrworker ../../mrapps/indexer.so  > /dev/null
 
 sort mr-out* | grep . > mr-indexer-all
 if cmp mr-indexer-all mr-correct-indexer.txt
@@ -135,11 +133,11 @@ echo '***' Starting map parallelism test.
 
 rm -f mr-*
 
-$TIMEOUT ../mrcoordinator ../pg*txt &
+$TIMEOUT ../mrcoordinator ../pg*txt &  > /dev/null
 sleep 1
 
-$TIMEOUT ../mrworker ../../mrapps/mtiming.so &
-$TIMEOUT ../mrworker ../../mrapps/mtiming.so
+$TIMEOUT ../mrworker ../../mrapps/mtiming.so &  > /dev/null
+$TIMEOUT ../mrworker ../../mrapps/mtiming.so  > /dev/null
 
 NT=`cat mr-out* | grep '^times-' | wc -l | sed 's/ //g'`
 if [ "$NT" != "2" ]
@@ -166,11 +164,11 @@ echo '***' Starting reduce parallelism test.
 
 rm -f mr-*
 
-$TIMEOUT ../mrcoordinator ../pg*txt &
+$TIMEOUT ../mrcoordinator ../pg*txt &  > /dev/null
 sleep 1
 
-$TIMEOUT ../mrworker ../../mrapps/rtiming.so &
-$TIMEOUT ../mrworker ../../mrapps/rtiming.so
+$TIMEOUT ../mrworker ../../mrapps/rtiming.so &  > /dev/null
+$TIMEOUT ../mrworker ../../mrapps/rtiming.so  > /dev/null
 
 NT=`cat mr-out* | grep '^[a-z] 2' | wc -l | sed 's/ //g'`
 if [ "$NT" -lt "2" ]
@@ -189,13 +187,13 @@ echo '***' Starting job count test.
 
 rm -f mr-*
 
-$TIMEOUT ../mrcoordinator ../pg*txt &
+$TIMEOUT ../mrcoordinator ../pg*txt &  > /dev/null
 sleep 1
 
-$TIMEOUT ../mrworker ../../mrapps/jobcount.so &
-$TIMEOUT ../mrworker ../../mrapps/jobcount.so
-$TIMEOUT ../mrworker ../../mrapps/jobcount.so &
-$TIMEOUT ../mrworker ../../mrapps/jobcount.so
+$TIMEOUT ../mrworker ../../mrapps/jobcount.so &  > /dev/null
+$TIMEOUT ../mrworker ../../mrapps/jobcount.so  > /dev/null
+$TIMEOUT ../mrworker ../../mrapps/jobcount.so &  > /dev/null
+$TIMEOUT ../mrworker ../../mrapps/jobcount.so  > /dev/null
 
 NT=`cat mr-out* | awk '{print $2}'`
 if [ "$NT" -eq "8" ]
@@ -219,15 +217,15 @@ echo '***' Starting early exit test.
 DF=anydone$$
 rm -f $DF
 
-($TIMEOUT ../mrcoordinator ../pg*txt ; touch $DF) &
+($TIMEOUT ../mrcoordinator ../pg*txt ; touch $DF) &  > /dev/null
 
 # give the coordinator time to create the sockets.
 sleep 1
 
 # start multiple workers.
-($TIMEOUT ../mrworker ../../mrapps/early_exit.so ; touch $DF) &
-($TIMEOUT ../mrworker ../../mrapps/early_exit.so ; touch $DF) &
-($TIMEOUT ../mrworker ../../mrapps/early_exit.so ; touch $DF) &
+($TIMEOUT ../mrworker ../../mrapps/early_exit.so ; touch $DF) &  > /dev/null
+($TIMEOUT ../mrworker ../../mrapps/early_exit.so ; touch $DF) &  > /dev/null
+($TIMEOUT ../mrworker ../../mrapps/early_exit.so ; touch $DF) &  > /dev/null
 
 # wait for any of the coord or workers to exit.
 # `jobs` ensures that any completed old processes from other tests
@@ -276,30 +274,30 @@ sort mr-out-0 > mr-correct-crash.txt
 rm -f mr-out*
 
 rm -f mr-done
-($TIMEOUT ../mrcoordinator ../pg*txt ; touch mr-done ) &
+($TIMEOUT ../mrcoordinator ../pg*txt ; touch mr-done ) &  > /dev/null
 sleep 1
 
 # start multiple workers
-$TIMEOUT ../mrworker ../../mrapps/crash.so &
+$TIMEOUT ../mrworker ../../mrapps/crash.so &  > /dev/null
 
 # mimic rpc.go's coordinatorSock()
 SOCKNAME=/var/tmp/824-mr-`id -u`
 
 ( while [ -e $SOCKNAME -a ! -f mr-done ]
   do
-    $TIMEOUT ../mrworker ../../mrapps/crash.so
+    $TIMEOUT ../mrworker ../../mrapps/crash.so  > /dev/null
     sleep 1
   done ) &
 
 ( while [ -e $SOCKNAME -a ! -f mr-done ]
   do
-    $TIMEOUT ../mrworker ../../mrapps/crash.so
+    $TIMEOUT ../mrworker ../../mrapps/crash.so  > /dev/null
     sleep 1
   done ) &
 
 while [ -e $SOCKNAME -a ! -f mr-done ]
 do
-  $TIMEOUT ../mrworker ../../mrapps/crash.so
+  $TIMEOUT ../mrworker ../../mrapps/crash.so  > /dev/null
   sleep 1
 done
 
