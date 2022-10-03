@@ -13,7 +13,7 @@ import "sync"
 
 type Persister struct {
 	mu        sync.Mutex
-	raftstate []byte
+	raftstate []byte // 只是说这是个字节数组，并没说里面具体保存了啥？State
 	snapshot  []byte
 }
 
