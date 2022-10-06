@@ -51,8 +51,8 @@ const (
 	ELECTION_TIMEOUT_MIN = 50
 )
 
-func getRand(server int64) int{
-	rand.Seed(time.Now().Unix()+server)
+func getRand(server int) int{
+	rand.Seed(time.Now().Unix()+int64(server))
 	return rand.Intn(ELECTION_TIMEOUT_MAX-ELECTION_TIMEOUT_MIN)+ELECTION_TIMEOUT_MIN
 }
 
@@ -98,7 +98,6 @@ type Raft struct {
 	// my custom variable
 	lastHeartBeat int64
 	state         int
-	candidating   bool
 }
 
 // function get current time in millisecond
@@ -215,19 +214,19 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
-	for rf.killed() == false {
-		time.Sleep(time.Duration(getRand(int64(rf.me))) * time.Millisecond)
+	// for rf.killed() == false {
+	// 	time.Sleep(time.Duration(getRand(rf.me)) * time.Millisecond)
 
-		_, isLeader := rf.GetState()
-		if isLeader {
-			rf.LeaderRoutine()
-		} else {
-			if rf.heartBeatsExperied() {
-				rf.ElectionRoutine()
-			}
-		}
+	// 	_, isLeader := rf.GetState()
+	// 	if isLeader {
+	// 		rf.LeaderRoutine()
+	// 	} else {
+	// 		if rf.heartBeatsExperied() {
+	// 			rf.ElectionRoutine()
+	// 		}
+	// 	}
 
-	}
+	// }
 }
 
 // the service or tester wants to create a Raft server. the ports
@@ -243,6 +242,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	// peers包含所有peer的rpc包括自己， persister是个单例对象，全局所有peer共享的状态，chan管道是收ApplyMsg的
 	rf := &Raft{}
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
@@ -258,6 +259,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+	go rf.ElectionTicker()
+	go rf.LeaderTicker()
 
 	return rf
 }

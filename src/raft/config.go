@@ -442,7 +442,7 @@ func (cfg *config) checkOneLeader() int {
 				}
 			}
 		}
-		log.Printf("fuuuuuuuuuck\n")
+		// log.Printf("fuuuuuuuuuck\n")
 
 		lastTermWithLeader := -1
 		for term, leaders := range leaders {

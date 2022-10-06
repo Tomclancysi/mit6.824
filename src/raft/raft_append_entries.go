@@ -1,6 +1,6 @@
 package raft
 
-import "sync"
+import "time"
 
 type AppendEntriesArgs struct {
 	Term         int
@@ -46,43 +46,49 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) LeaderRoutine() {
-	var wg sync.WaitGroup
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	currentTerm := rf.currentTerm
-	
-	eachTerm := make([]int, len(rf.peers))
+	// rf.mu.Lock()
+	// defer rf.mu.Unlock()
+	// currentTerm := rf.currentTerm
+	// eachTerm := make([]int, len(rf.peers))
 	for server, _ := range rf.peers {
 		if server == rf.me {
 			continue
 		}
-		wg.Add(1)
 		go func(server int) {
-			defer wg.Done()
+			rf.mu.Lock()
+			if rf.state != Leader {
+				rf.mu.Unlock()
+				return
+			}
 			args := AppendEntriesArgs{
-				Term:     currentTerm,
+				Term:     rf.currentTerm,
 				LeaderId: rf.me,
 				Entries:  make([]ApplyMsg, 0),
 				// TODO
 			}
+			rf.mu.Unlock()
+
 			reply := AppendEntriesReply{}
 			if ok := rf.sendAppendEntries(server, &args, &reply); ok {
-				eachTerm[server] = reply.Term
+				rf.mu.Lock()
+				if reply.Term > rf.currentTerm {
+					rf.ChangeState(Follower, true)
+				}
+				rf.mu.Unlock()
 			}
 		}(server)
 	}
-	wg.Wait()
-	maxTerm, replyCnt := 0, 0
-	for _, t := range eachTerm {
-		if maxTerm < t {
-			maxTerm = t
+}
+
+func (rf *Raft) LeaderTicker() {
+	// Leader 应该时刻在发heartbeat
+	for rf.killed() == false {
+		curTime := getCurrentTime()
+		time.Sleep(time.Duration(ELECTION_TIMEOUT_MIN) * time.Millisecond)
+		rf.mu.Lock()
+		if rf.lastHeartBeat < curTime && rf.state == Leader {
+			rf.LeaderRoutine()
 		}
-		if t > 0 {
-			replyCnt++
-		}
-	}
-	if maxTerm > rf.currentTerm || replyCnt == 0 {
-		rf.votedFor = -1 // 已经过时了
-		rf.state = Follower
+		rf.mu.Unlock()
 	}
 }

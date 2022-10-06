@@ -1,9 +1,8 @@
 package raft
 
 import (
-	"log"
-	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // example RequestVote RPC arguments structure.
@@ -22,7 +21,6 @@ type RequestVoteReply struct {
 	// Your data here (2A).
 	Term        int
 	VoteGranted bool
-	VoteFor     int
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
@@ -34,134 +32,99 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
-	DPrintf("[ELECT CLIENT] Server%v@Term%v receive the request vote from Server%v@Term%v\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
+	defer rf.mu.Unlock()
 	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
-		reply.Term = rf.currentTerm
-	} else if args.Term == rf.currentTerm {
-		// 每个term一个server只能投票一次，投给谁之后不能改
-		if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
-			// log.Printf("(Server %v, Term %v) Vote for (Server %v, Term %v)\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
-			reply.VoteGranted = true
-			reply.Term = rf.currentTerm
-			rf.mu.Unlock()
-			rf.ChangeState(Follower)
-			rf.mu.Lock()
-			rf.votedFor = args.CandidateID
-		} else {
-			reply.VoteGranted = false
-			reply.Term = rf.currentTerm
-		}
-	} else if args.Term > rf.currentTerm {
-		// 如果term比较大，那就任它当老大了
-		// log.Printf("(Server %v, Term %v) Vote for (Server %v, Term %v)\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
-		reply.VoteGranted = true
-		reply.Term = rf.currentTerm
-		rf.mu.Unlock()
-		rf.ChangeState(Follower)
-		rf.mu.Lock()
-		rf.votedFor = args.CandidateID
+		return
+	}
+	// 什么时候grant？ 
+	reply.Term = args.Term
+	if args.Term > rf.currentTerm {
+		rf.ChangeState(Follower, false)
 		rf.currentTerm = args.Term
 	}
-	if reply.VoteGranted{
-		DPrintf("[ELECT CLIENT] Server%v@Term%v vote for Server%v@Term%v\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
+	if rf.votedFor != -1 && rf.votedFor != args.CandidateID {
+		reply.VoteGranted = false
 	} else {
-		DPrintf("[ELECT CLIENT] Server%v@Term%v vote for Server%v@Term%v\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
+		DPrintf("[Server] Server%v@Term%v vote for Server%v@Term%v\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
+		reply.VoteGranted = true
+		rf.votedFor = args.CandidateID
 	}
-	
-	rf.mu.Unlock()
 }
 
-
-
-func (rf *Raft) CollectTicket() bool {
-	start := getCurrentTime()
-	var ticket int32
-	ticket = int32(len(rf.peers)/2)
-	ticketCnt := make([][]int, len(rf.peers))
-	DPrintf("[ELECT SERVER] Server %v@Term %v running an election\n", rf.me, rf.currentTerm)
-
-	var wg sync.WaitGroup
-
-	for server, _ := range rf.peers {
-		if server == rf.me {
-			continue
-		}
-		// parallay request
-		wg.Add(1)
-		go func(server int) {
-			defer wg.Done()
-			rf.mu.Lock()
-			args := RequestVoteArgs{
-				Term:        rf.currentTerm,
-				CandidateID: rf.me,
-			}
-			rf.mu.Unlock()
-			reply := RequestVoteReply{}
-			if ok := rf.sendRequestVote(server, &args, &reply); ok {
-				if reply.VoteGranted {
-					ticketCnt[server] = []int{server, reply.Term, 1}
-					atomic.AddInt32(&ticket, -1)
-					DPrintf("[ELECT SERVER] Server%v@Term%v vote for Server%v@Term%v\n", server, reply.Term, rf.me, rf.currentTerm)
-				} else {
-					ticketCnt[server] = []int{server, reply.Term, 0}
-					DPrintf("[ELECT SERVER] Server%v@Term%v reject vote for Server%v@Term%v\n", server, reply.Term, rf.me, rf.currentTerm)
-				}
-			} else {
-				ticketCnt[server] = []int{server, 0, 0}
-			}
-		}(server)
-	}
-	wg.Wait()
-	DPrintf("[ELECT SERVER] Server%v@Term%v earn tickets%v\n", rf.me, rf.currentTerm, ticketCnt)
-	
-	end := getCurrentTime()
-	DPrintf("Collect ticket cost %vms\n", end-start)
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return atomic.LoadInt32(&ticket) <= 0 && rf.state == Candidate
-}
-
-func (rf *Raft) ChangeState(state int) {
-	stateName := []string {"FOLLOWER","CANDADITE","LEADER"}
-	DPrintf("[STATE] Server %v State change FROM %v to %v", rf.me, stateName[rf.state], stateName[state])
+func (rf *Raft) ChangeState(state int, refresh bool) {
+	stateName := [] string {"Follower", "Candidate", "Leader"}
+	DPrintf("[Server] Server%v@Term%v state change from %v to %v", rf.me, rf.currentTerm, stateName[rf.state], stateName[state])
 	if state == Follower {
-		rf.candidating = false
 		rf.state = Follower
-	} else if state == Candidate {
-		rf.currentTerm++
-		rf.votedFor = rf.me
+		rf.votedFor = -1
+		if refresh {
+			rf.lastHeartBeat = getCurrentTime()
+		}
+	} else if state == Candidate { // 如果变身候选人 则开启一轮投票
 		rf.state = Candidate
-		rf.candidating = true
+		rf.currentTerm++
+		rf.ElectionRoutine()
 	} else {
-		rf.votedFor = rf.me
+		DPrintf("[Server] Server%v@Term%v is select as Leader!!!\n", rf.me, rf.currentTerm)
 		rf.state = Leader
 	}
 }
 
-func (rf *Raft) ElectionRoutine() bool {
-	// if rf.state == Follower {
-	// 	rf.ChangeState(Candidate)
-	// 	log.Printf("[INFO] Server %v, Term %v change to candidate\n", rf.me, rf.currentTerm)
-	// } else if rf.state == Candidate {
-	// 	log.Printf("[FAIL] Server %v, Term %v Election Clash", rf.me, rf.currentTerm)
-	// } else {
-	// 	log.Printf("[Error] Server %v, Term %v Leader can not change to candidate\n", rf.me, rf.currentTerm)
-	// 	return false
-	// }
-	rf.mu.Lock()
-	rf.ChangeState(Candidate)
-	rf.mu.Unlock()
-	// log.Printf("(Server %v, Term %v) earn %v tickets of all %v\n", rf.me, rf.currentTerm, ticket, allTicket)
-	var ok bool
-	if ok = rf.CollectTicket(); ok {
-		rf.mu.Lock()
-		rf.ChangeState(Leader)
-		rf.mu.Unlock()
-		rf.LeaderRoutine()
-		log.Printf("==>(Server %v, Term%v) is select as leader\n", rf.me, rf.currentTerm)
-	} else {
-		rf.ChangeState(Follower)
+func (rf *Raft) ElectionRoutine() {
+	needTicket := int32(len(rf.peers) / 2)
+	for server := 0; server < len(rf.peers); server ++ {
+		if server == rf.me {
+			continue
+		}
+		go func(server int){
+			rf.mu.Lock()
+			args := RequestVoteArgs{
+				Term: rf.currentTerm,
+				CandidateID: rf.me,
+				LastLogIndex: 0,
+				LastLogTerm: 0,
+			}
+			rf.mu.Unlock()
+			reply := RequestVoteReply{}
+			ok := rf.sendRequestVote(server, &args, &reply)
+			if ok {
+				rf.mu.Lock()
+				if reply.Term > rf.currentTerm {
+					rf.ChangeState(Follower, false)
+					rf.mu.Unlock()
+					return
+				} else if reply.Term < rf.currentTerm {
+					rf.mu.Unlock()
+					return
+				}
+				if rf.state != Candidate {
+					rf.mu.Unlock()
+					return
+				}
+				if reply.VoteGranted {
+					if atomic.AddInt32(&needTicket, -1) <= 0 {
+						rf.ChangeState(Leader, false)
+						rf.LeaderRoutine()
+					}
+				}
+				rf.mu.Unlock()
+			}
+		}(server)
 	}
-	return ok
+}
+
+func (rf *Raft) ElectionTicker() {
+	// 随机睡一段时间醒来如果没有tick 开始选举
+	for rf.killed() == false {
+		curTime := getCurrentTime()
+		time.Sleep(time.Duration(getRand(rf.me))*time.Millisecond)
+		rf.mu.Lock()
+		if rf.lastHeartBeat < curTime && rf.state != Leader {
+			// rf.mu.Unlock()
+			rf.ChangeState(Candidate, false)
+		}
+		rf.mu.Unlock()	
+	}
 }

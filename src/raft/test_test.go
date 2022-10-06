@@ -10,7 +10,6 @@ package raft
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -23,7 +22,6 @@ import (
 const RaftElectionTimeout = 1000 * time.Millisecond
 
 func TestInitialElection2A(t *testing.T) {
-	return
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -44,6 +42,7 @@ func TestInitialElection2A(t *testing.T) {
 	// does the leader+term stay the same if there is no network failure?
 	time.Sleep(2 * RaftElectionTimeout)
 	term2 := cfg.checkTerms()
+	fmt.Printf("term1=%v, term2=%v\n", term1, term2)
 	if term1 != term2 {
 		fmt.Printf("warning: term changed even though there were no failures")
 	}
@@ -64,7 +63,7 @@ func TestReElection2A(t *testing.T) {
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
-	log.Printf("Leader %v is disconnected\n", leader1)
+	// log.Printf("Leader %v is disconnected\n", leader1)
 	cfg.disconnect(leader1)
 	// time.Sleep(RaftElectionTimeout)
 	cfg.checkOneLeader()
@@ -72,17 +71,17 @@ func TestReElection2A(t *testing.T) {
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
-	log.Printf("Leader %v is connected\n", leader1)
+	// log.Printf("Leader %v is connected\n", leader1)
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no new leader should
 	// be elected.
 	cfg.disconnect(leader2)
-	log.Printf("Leader %v is disconnected\n", leader2)
+	// log.Printf("Leader %v is disconnected\n", leader2)
 	cfg.disconnect((leader2 + 1) % servers)
-	log.Printf("Leader %v is disconnected\n", (leader2+1)%servers)
-	log.Println("should has no leader when only one server last")
+	// log.Printf("Leader %v is disconnected\n", (leader2+1)%servers)
+	// log.Println("should has no leader when only one server last")
 	time.Sleep(2 * RaftElectionTimeout)
 
 	// check that the one connected server
@@ -102,7 +101,6 @@ func TestReElection2A(t *testing.T) {
 }
 
 func TestManyElections2A(t *testing.T) {
-	return
 	servers := 7
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
