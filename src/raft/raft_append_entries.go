@@ -31,14 +31,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(args.Entries) == 0 { // heatbeat
 
 		if rf.currentTerm < args.Term { // 如果他是新的term，自然要跟随了，投它
-			rf.votedFor = args.LeaderId
+			// rf.votedFor = args.LeaderId meiyong
 			rf.currentTerm = args.Term
 		}
 		reply.Success = true
 		reply.Term = rf.currentTerm
 
-		rf.lastHeartBeat = getCurrentTime()
-		rf.state = Follower
+		// rf.lastHeartBeat = getCurrentTime()
+		// rf.state = Follower
+		rf.ChangeState(Follower, true)
 	}
 	rf.mu.Unlock()
 	// TODO 5.3
