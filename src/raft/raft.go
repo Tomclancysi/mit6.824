@@ -47,8 +47,8 @@ const (
 	Leader    = 2
 
 	
-	ELECTION_TIMEOUT_MAX = 100
-	ELECTION_TIMEOUT_MIN = 50
+	ELECTION_TIMEOUT_MAX = 200 // 修改这个确实会减少rpc次数
+	ELECTION_TIMEOUT_MIN = 100
 )
 
 func getRand(server int) int{

@@ -41,7 +41,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// 什么时候grant？ 
 	reply.Term = args.Term
 	if args.Term > rf.currentTerm {
-		rf.ChangeState(Follower, false)
+		// rf.ChangeState(Follower, false)
 		rf.currentTerm = args.Term
 	}
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateID {
@@ -50,6 +50,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		DPrintf("[Server] Server%v@Term%v vote for Server%v@Term%v\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateID
+		rf.ChangeState(Follower, true)
 	}
 }
 
