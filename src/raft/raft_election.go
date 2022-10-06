@@ -3,6 +3,7 @@ package raft
 import (
 	"log"
 	"sync"
+	"sync/atomic"
 )
 
 // example RequestVote RPC arguments structure.
@@ -75,11 +76,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) CollectTicket() bool {
 	start := getCurrentTime()
-	ticket := 1
+	var ticket int32
+	ticket = int32(len(rf.peers)/2)
 	ticketCnt := make([][]int, len(rf.peers))
-	rf.mu.Lock()
-	currentTerm := rf.currentTerm
-	rf.mu.Unlock()
 	DPrintf("[ELECT SERVER] Server %v@Term %v running an election\n", rf.me, rf.currentTerm)
 
 	var wg sync.WaitGroup
@@ -92,14 +91,17 @@ func (rf *Raft) CollectTicket() bool {
 		wg.Add(1)
 		go func(server int) {
 			defer wg.Done()
+			rf.mu.Lock()
 			args := RequestVoteArgs{
-				Term:        currentTerm,
+				Term:        rf.currentTerm,
 				CandidateID: rf.me,
 			}
+			rf.mu.Unlock()
 			reply := RequestVoteReply{}
 			if ok := rf.sendRequestVote(server, &args, &reply); ok {
 				if reply.VoteGranted {
 					ticketCnt[server] = []int{server, reply.Term, 1}
+					atomic.AddInt32(&ticket, -1)
 					DPrintf("[ELECT SERVER] Server%v@Term%v vote for Server%v@Term%v\n", server, reply.Term, rf.me, rf.currentTerm)
 				} else {
 					ticketCnt[server] = []int{server, reply.Term, 0}
@@ -112,21 +114,15 @@ func (rf *Raft) CollectTicket() bool {
 	}
 	wg.Wait()
 	DPrintf("[ELECT SERVER] Server%v@Term%v earn tickets%v\n", rf.me, rf.currentTerm, ticketCnt)
-	for server, _ := range rf.peers {
-		if server == rf.me {
-			continue
-		}
-		if ticketCnt[server][2] == 1 {
-			ticket++
-		}
-	}
+	
 	end := getCurrentTime()
 	DPrintf("Collect ticket cost %vms\n", end-start)
-	return ticket > len(rf.peers)/2
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return atomic.LoadInt32(&ticket) <= 0 && rf.state == Candidate
 }
 
 func (rf *Raft) ChangeState(state int) {
-	rf.mu.Lock()
 	stateName := []string {"FOLLOWER","CANDADITE","LEADER"}
 	DPrintf("[STATE] Server %v State change FROM %v to %v", rf.me, stateName[rf.state], stateName[state])
 	if state == Follower {
@@ -141,7 +137,6 @@ func (rf *Raft) ChangeState(state int) {
 		rf.votedFor = rf.me
 		rf.state = Leader
 	}
-	rf.mu.Unlock()
 }
 
 func (rf *Raft) ElectionRoutine() bool {
@@ -154,11 +149,15 @@ func (rf *Raft) ElectionRoutine() bool {
 	// 	log.Printf("[Error] Server %v, Term %v Leader can not change to candidate\n", rf.me, rf.currentTerm)
 	// 	return false
 	// }
+	rf.mu.Lock()
 	rf.ChangeState(Candidate)
+	rf.mu.Unlock()
 	// log.Printf("(Server %v, Term %v) earn %v tickets of all %v\n", rf.me, rf.currentTerm, ticket, allTicket)
 	var ok bool
 	if ok = rf.CollectTicket(); ok {
+		rf.mu.Lock()
 		rf.ChangeState(Leader)
+		rf.mu.Unlock()
 		rf.LeaderRoutine()
 		log.Printf("==>(Server %v, Term%v) is select as leader\n", rf.me, rf.currentTerm)
 	} else {
