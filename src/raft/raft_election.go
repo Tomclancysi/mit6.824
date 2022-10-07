@@ -82,7 +82,7 @@ func (rf *Raft) ElectionRoutine() {
 		go func(server int){
 			rf.mu.Lock()
 			args := RequestVoteArgs{
-				Term: rf.currentTerm,
+				Term: rf.currentTerm, // 这个Term可能不是刚进来的term了，需要判断，传参时传入copy
 				CandidateID: rf.me,
 				LastLogIndex: 0,
 				LastLogTerm: 0,
@@ -105,8 +105,9 @@ func (rf *Raft) ElectionRoutine() {
 					return
 				}
 				if reply.VoteGranted {
-					if atomic.AddInt32(&needTicket, -1) <= 0 {
+					if atomic.AddInt32(&needTicket, -1) <= 0 && rf.state != Leader {
 						rf.ChangeState(Leader, false)
+						rf.ReInitLeader()
 						rf.LeaderRoutine()
 					}
 				}

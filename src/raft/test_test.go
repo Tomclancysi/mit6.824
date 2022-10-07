@@ -142,7 +142,7 @@ func TestBasicAgree2B(t *testing.T) {
 
 	iters := 3
 	for index := 1; index < iters+1; index++ {
-		nd, _ := cfg.nCommitted(index)
+		nd, _ := cfg.nCommitted(index) // 干啥呢
 		if nd > 0 {
 			t.Fatalf("some have committed before Start()")
 		}

@@ -504,8 +504,8 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 		cmd1, ok := cfg.logs[i][index]
 		cfg.mu.Unlock()
 
-		if ok {
-			if count > 0 && cmd != cmd1 {
+		if ok { // commited entry
+			if count > 0 && cmd != cmd1 { // 有两种commited cmd 啥玩意
 				cfg.t.Fatalf("committed values do not match: index %v, %v, %v",
 					index, cmd, cmd1)
 			}
@@ -550,7 +550,7 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 // do a complete agreement.
 // it might choose the wrong leader initially,
 // and have to re-submit after giving up.
-// entirely gives up after about 10 seconds.
+// entirely gives up after about 10 seconds. 10秒内达成共识，commit or abort
 // indirectly checks that the servers agree on the
 // same value, since nCommitted() checks this,
 // as do the threads that read from applyCh.
@@ -574,7 +574,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			}
 			cfg.mu.Unlock()
 			if rf != nil {
-				index1, _, ok := rf.Start(cmd)
+				index1, _, ok := rf.Start(cmd) // 发送给Leader了，返回index是？？应该就是在log的位置
 				if ok {
 					index = index1
 					break
@@ -592,7 +592,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 					// committed
 					if cmd1 == cmd {
 						// and it was the command we submitted.
-						return index
+						return index // 提交的Index在log中
 					}
 				}
 				time.Sleep(20 * time.Millisecond)

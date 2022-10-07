@@ -65,6 +65,7 @@ type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
 	CommandIndex int
+	CommandTerm  int
 
 	// For 2D:
 	SnapshotValid bool
@@ -88,12 +89,13 @@ type Raft struct {
 	votedFor    int
 	log         []ApplyMsg
 
-	commitIndex int
-	lastApplied int
+	applyCh		chan ApplyMsg
 
-	// only for leader
-	nextIndex  []int
-	matchIndex []int
+	commitIndex int //这俩啥意思？
+	lastApplied int
+	// only for leader 每次当选leader都要更改
+	nextIndex  []int // 初始值是Leader的logIndex+1 ？
+	matchIndex []int // 初始为0
 
 	// my custom variable
 	lastHeartBeat int64
@@ -103,6 +105,19 @@ type Raft struct {
 // function get current time in millisecond
 func getCurrentTime() int64 {
 	return time.Now().UnixNano() / 1e6
+}
+
+func (rf *Raft) ReInitLeader() {
+	var nextIndex int
+	if len(rf.log) == 0 {
+		nextIndex = 1
+	} else {
+		nextIndex = rf.log[len(rf.log)-1].CommandIndex + 1
+	}
+	for i := 0; i < len(rf.peers); i++ {
+		rf.nextIndex[i] = nextIndex // 这俩啥意思
+		rf.matchIndex[i] = 0
+	}
 }
 
 // return currentTerm and whether this server
@@ -183,12 +198,29 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-
 	// Your code here (2B).
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	index := -1 // 如果他被commit了，它的位置在哪里？
+	for _, logEntry := range rf.log {
+		if logEntry.Command == command {
+			index = logEntry.CommandIndex // index是这个吗 还是下标？？
+			break
+		}
+	}
+	term := rf.currentTerm
+	isLeader := rf.state == Leader
+	if isLeader == false || index != -1 { // 不是leader或者正在reachAgreement
+		return index, term, isLeader	
+	}
+	index = len(rf.log)+1 // 从1开始
+	rf.log = append(rf.log, ApplyMsg{
+		CommandValid: false,
+		Command: command,
+		CommandIndex: index,
+		// default for 2D
+	})
+	// start agreement and return quickly!!!!!! LeaderRoutine将会处理这些的！
 	return index, term, isLeader
 }
 
@@ -213,7 +245,7 @@ func (rf *Raft) killed() bool {
 
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
-func (rf *Raft) ticker() {
+// func (rf *Raft) ticker() {
 	// for rf.killed() == false {
 	// 	time.Sleep(time.Duration(getRand(rf.me)) * time.Millisecond)
 
@@ -227,7 +259,7 @@ func (rf *Raft) ticker() {
 	// 	}
 
 	// }
-}
+// }
 
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -251,6 +283,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (2A, 2B, 2C).
 	rf.votedFor = -1
 	rf.currentTerm = 1
+	rf.log = make([]ApplyMsg, 0)
+	rf.applyCh = applyCh // 应该是从这里接收调用消息
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
+	
 	// my custom variable
 	rf.lastHeartBeat = getCurrentTime()
 	rf.state = Follower
@@ -258,9 +297,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
-	go rf.ticker()
 	go rf.ElectionTicker()
 	go rf.LeaderTicker()
+	go rf.CommandAgreementTicker()
 
 	return rf
 }
