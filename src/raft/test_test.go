@@ -142,11 +142,11 @@ func TestBasicAgree2B(t *testing.T) {
 
 	iters := 3
 	for index := 1; index < iters+1; index++ {
-		nd, _ := cfg.nCommitted(index) // 干啥呢
+		nd, _ := cfg.nCommitted(index) // 检查应当没有已经commit的 如何声明已经commited？？
 		if nd > 0 {
 			t.Fatalf("some have committed before Start()")
 		}
-
+		// one函数的作用 是提交一条指令？如何知道回复
 		xindex := cfg.one(index*100, servers, false)
 		if xindex != index {
 			t.Fatalf("got index %v but expected %v", xindex, index)
@@ -171,7 +171,7 @@ func TestRPCBytes2B(t *testing.T) {
 	iters := 10
 	var sent int64 = 0
 	for index := 2; index < iters+2; index++ {
-		cmd := randstring(5000)
+		cmd := randstring(5)//5000 先不改这里了 后面在说
 		xindex := cfg.one(cmd, servers, false)
 		if xindex != index {
 			t.Fatalf("got index %v but expected %v", xindex, index)
