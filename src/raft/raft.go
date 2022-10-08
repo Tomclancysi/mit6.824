@@ -47,8 +47,8 @@ const (
 	Leader    = 2
 
 	
-	ELECTION_TIMEOUT_MAX = 200 // 修改这个确实会减少rpc次数
-	ELECTION_TIMEOUT_MIN = 100
+	ELECTION_TIMEOUT_MAX = 300 // 修改这个确实会减少rpc次数
+	ELECTION_TIMEOUT_MIN = 150
 )
 
 func getRand(server int) int{
@@ -215,7 +215,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	index = len(rf.log)+1 // 从1开始
 	rf.log = append(rf.log, ApplyMsg{
-		CommandValid: false,
+		CommandValid: true,
 		Command: command,
 		CommandIndex: index,
 		// default for 2D
@@ -284,7 +284,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.votedFor = -1
 	rf.currentTerm = 1
 	rf.log = make([]ApplyMsg, 0)
-	rf.applyCh = applyCh // 应该是从这里接收调用消息
+	rf.applyCh = applyCh // 应该是从这里接收调用消息 看样子是个双向通道，读test源码看这个通道作用
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(rf.peers))

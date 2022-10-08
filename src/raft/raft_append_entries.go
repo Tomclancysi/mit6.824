@@ -34,24 +34,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Success = true
 	reply.Term = rf.currentTerm
 	rf.ChangeState(Follower, true)
-	if len(args.Entries) == 0 && args.LeaderCommit == 0 && args.PrevLogIndex == 0 && args.PrevLogTerm == 0 {
-		rf.mu.Unlock()
-		return
-	}
-	// TODO 5.3 这段逻辑还没搞清楚
-	// 判断有没有新的log entries，指令等到确认后通过channel传输
-
 	// 判断指定位置的Term Index相同返回true
-	if (args.PrevLogIndex > len(rf.log) || rf.log[args.PrevLogIndex-1].CommandTerm != args.PrevLogTerm) {
+	if args.PrevLogIndex > 0 && (args.PrevLogIndex > len(rf.log) || rf.log[args.PrevLogIndex-1].CommandTerm != args.PrevLogTerm) {
 		reply.Success = false
 		rf.log = rf.log[:args.PrevLogIndex-1] // 删除掉不agree的部分
+	} else {
+		// DPrintf("[Server] Follower accept these log entries %v\n",args.Entries)
+		if len(args.Entries) > 0 {
+			rf.log = append(rf.log, args.Entries...)
+		}
 	}
-	// 后续指令保存到log
-	rf.log = append(rf.log, args.Entries...)
-
+	
 	if args.LeaderCommit > rf.commitIndex {
 		n := rf.log[len(rf.log)-1].CommandIndex // log不一定有值把
-		rf.commitIndex = MinInt(n, args.LeaderCommit) // 是不是把commit范围内的执行了
+		N := MinInt(n, args.LeaderCommit)
+		go rf.SendFeedToClientByChan(rf.log[rf.commitIndex:N]) // 把commit范围内的执行了
+		rf.commitIndex = N
 	}
 	rf.mu.Unlock()
 }
@@ -67,18 +65,18 @@ func (rf *Raft) LeaderRoutine() {
 				rf.mu.Unlock()
 				return
 			}
-			args := AppendEntriesArgs{
-				Term:     rf.currentTerm,
-				LeaderId: rf.me,
-				//Entries:  rf.log[rf.matchIndex[server]:rf.nextIndex[server]],
-				//LeaderCommit: rf.commitIndex,
-				// 如果没有猜错应该是这个吧 存疑 heartbeat 不要管这些！
-				//PrevLogIndex: rf.log[rf.matchIndex[server]].CommandIndex,
-				//PrevLogTerm: rf.log[rf.matchIndex[server]].CommandTerm,
-			}
+			// args := AppendEntriesArgs{
+			// 	Term:     rf.currentTerm,
+			// 	LeaderId: rf.me,
+			// 	//Entries:  rf.log[rf.matchIndex[server]:rf.nextIndex[server]],
+			// 	LeaderCommit: rf.commitIndex,
+			// 	// 如果没有猜错应该是这个吧 存疑 heartbeat 不要管这些！
+			// 	PrevLogIndex: rf.log[rf.matchIndex[server]].CommandIndex,
+			// 	PrevLogTerm: rf.log[rf.matchIndex[server]].CommandTerm,
+			// }
+			args, reply := rf.GetReplicateArgsAndReply(server, false)
 			rf.mu.Unlock()
 
-			reply := AppendEntriesReply{}
 			if ok := rf.sendAppendEntries(server, &args, &reply); ok {
 				rf.mu.Lock()
 				if reply.Term > rf.currentTerm {

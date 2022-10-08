@@ -142,6 +142,7 @@ func (cfg *config) crash1(i int) {
 }
 
 func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
+	// 检查每个server的log 看他们每个的commited情况，推动整体commited情况
 	err_msg := ""
 	v := m.Command
 	for j := 0; j < len(cfg.logs); j++ {
@@ -581,6 +582,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				}
 			}
 		}
+		// 先通过Start发送给Leader 然后给每个人
 
 		if index != -1 {
 			// somebody claimed to be the leader and to have
@@ -588,6 +590,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
+				// DPrintf("[System] number<%v> of cmd<%v>\n", nd, cmd1)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {

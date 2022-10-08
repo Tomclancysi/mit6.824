@@ -28,12 +28,22 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+func (rf *Raft) MoreUpToDateThan(LastLogTerm int, lastLogIndex int) bool {
+	L := len(rf.log)
+	if L == 0 {
+		return false
+	}
+	lastLog := rf.log[L-1]
+	return (lastLog.CommandTerm == LastLogTerm && lastLog.CommandIndex > lastLogIndex) || (lastLog.CommandTerm > LastLogTerm)
+}
+
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if args.Term < rf.currentTerm {
+	// restriction of log, if this.log more up-to-date, reject
+	if args.Term < rf.currentTerm || rf.MoreUpToDateThan(args.LastLogTerm, args.LastLogIndex) {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
@@ -47,7 +57,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateID {
 		reply.VoteGranted = false
 	} else {
-		DPrintf("[Server] Server%v@Term%v vote for Server%v@Term%v\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
+		// DPrintf("[Server] Server%v@Term%v vote for Server%v@Term%v\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateID
 		rf.ChangeState(Follower, true)
@@ -55,8 +65,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) ChangeState(state int, refresh bool) {
-	stateName := [] string {"Follower", "Candidate", "Leader"}
-	DPrintf("[Server] Server%v@Term%v state change from %v to %v", rf.me, rf.currentTerm, stateName[rf.state], stateName[state])
+	// stateName := [] string {"Follower", "Candidate", "Leader"}
+	// DPrintf("[Server] Server%v@Term%v state change from %v to %v", rf.me, rf.currentTerm, stateName[rf.state], stateName[state])
 	if state == Follower {
 		rf.state = Follower
 		rf.votedFor = -1
@@ -68,7 +78,7 @@ func (rf *Raft) ChangeState(state int, refresh bool) {
 		rf.currentTerm++
 		rf.ElectionRoutine()
 	} else {
-		DPrintf("[Server] Server%v@Term%v is select as Leader!!!\n", rf.me, rf.currentTerm)
+		// DPrintf("[Server] Server%v@Term%v is select as Leader!!!\n", rf.me, rf.currentTerm)
 		rf.state = Leader
 	}
 }
@@ -84,8 +94,10 @@ func (rf *Raft) ElectionRoutine() {
 			args := RequestVoteArgs{
 				Term: rf.currentTerm, // 这个Term可能不是刚进来的term了，需要判断，传参时传入copy
 				CandidateID: rf.me,
-				LastLogIndex: 0,
-				LastLogTerm: 0,
+			}
+			if len(rf.log) > 0 {
+				args.LastLogIndex = rf.log[len(rf.log)-1].CommandIndex
+				args.LastLogTerm = rf.log[len(rf.log)-1].CommandTerm
 			}
 			rf.mu.Unlock()
 			reply := RequestVoteReply{}
