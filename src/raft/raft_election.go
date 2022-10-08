@@ -43,7 +43,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	// restriction of log, if this.log more up-to-date, reject
-	if args.Term < rf.currentTerm || rf.MoreUpToDateThan(args.LastLogTerm, args.LastLogIndex) {
+	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
@@ -51,8 +51,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// 什么时候grant？ 
 	reply.Term = args.Term
 	if args.Term > rf.currentTerm {
-		// rf.ChangeState(Follower, false)
 		rf.currentTerm = args.Term
+	}
+	if rf.MoreUpToDateThan(args.LastLogTerm, args.LastLogIndex) {
+		reply.VoteGranted = false
+		return
 	}
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateID {
 		reply.VoteGranted = false

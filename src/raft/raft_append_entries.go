@@ -53,7 +53,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 判断指定位置的Term Index相同返回true
 	if args.PrevLogIndex > 0 && (args.PrevLogIndex > len(rf.log) || rf.log[args.PrevLogIndex-1].CommandTerm != args.PrevLogTerm) {
 		reply.Success = false
-		rf.log = rf.log[:args.PrevLogIndex-1] // 删除掉不agree的部分
+		if args.PrevLogIndex <= len(rf.log) {
+			rf.log = rf.log[:args.PrevLogIndex-1] // 删除掉不agree的部分
+		}
 	} else {
 		// DPrintf("[Server] Follower accept these log entries %v\n",args.Entries)
 		rf.JoinEntries(args.Entries)
@@ -64,7 +66,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		N := MinInt(n, args.LeaderCommit)
 		go rf.SendFeedToClientByChan(rf.log[rf.commitIndex:N]) // 把commit范围内的执行了
 		rf.commitIndex = N
-		DPrintf("[Follower] Server%v commitIndex is %v, the log is %v\n", rf.me, rf.commitIndex, rf.log)
+		DPrintf("[Follower] Server%v commitIndex is %v, the log is %v;; reply.success=%v, args.Ent=%v\n", rf.me, rf.commitIndex, rf.log, reply.Success, args.Entries)
 	}
 	rf.mu.Unlock()
 }

@@ -302,6 +302,7 @@ func TestFailAgree2B(t *testing.T) {
 	// re-connect
 	cfg.connect((leader + 1) % servers)
 	DPrintf("[Test]>> Follower%v reconnected\n", (leader + 1) % servers)
+	DPrintf("ADDING NEW 106 107!!!!!!!!!!!!")
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
