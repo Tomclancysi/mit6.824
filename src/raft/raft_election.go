@@ -48,11 +48,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 		return
 	}
-	// 什么时候grant？ 
-	reply.Term = args.Term
+
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
+		rf.ChangeState(Follower, true)
 	}
+	reply.Term = rf.currentTerm
 	if rf.MoreUpToDateThan(args.LastLogTerm, args.LastLogIndex) {
 		reply.VoteGranted = false
 		return
@@ -63,7 +64,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// DPrintf("[Server] Server%v@Term%v vote for Server%v@Term%v\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateID
-		rf.ChangeState(Follower, true)
 	}
 }
 
@@ -120,10 +120,11 @@ func (rf *Raft) ElectionRoutine() {
 					return
 				}
 				if reply.VoteGranted {
-					if atomic.AddInt32(&needTicket, -1) <= 0 && rf.state != Leader {
+					if atomic.AddInt32(&needTicket, -1) == 0 && rf.state != Leader {
 						rf.ChangeState(Leader, false)
 						rf.ReInitLeader()
 						rf.LeaderRoutine()
+						DPrintf("New leader is %v@Term%v\n", rf.me, rf.currentTerm)
 					}
 				}
 				rf.mu.Unlock()

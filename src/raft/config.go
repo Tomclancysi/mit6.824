@@ -581,14 +581,12 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 					break
 				}
 			}
-			DPrintf("%v", si)
 		}
 		// 先通过Start发送给Leader 然后给每个人
 
 		if index != -1 {
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
-			DPrintf("cmd is upload")
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
@@ -606,7 +604,6 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 			}
 		} else {
-			DPrintf("fucker")
 			time.Sleep(50 * time.Millisecond)
 		}
 	}

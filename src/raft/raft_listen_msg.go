@@ -24,16 +24,20 @@ func (rf *Raft) GetReplicateArgsAndReply(server int, appendCMD bool) (AppendEntr
 		LeaderId:     rf.me,
 		LeaderCommit: rf.commitIndex,
 	}
-	// 如果nextIndex server就是最新的，那就没必要传这俩参数了
-	if rf.nextIndex[server] > 0 && len(rf.log) > 0 && rf.nextIndex[server] <= len(rf.log) { // 判断这条记录是否对应啊
-		args.PrevLogIndex = rf.nextIndex[server]
-		// if rf.nextIndex[server]-1 >= len(rf.log) {
-		// 	DPrintf("[Server ERROR] Server%v nextIndex[%v] = %v, len(rf.log) = %v\n", rf.me, server, rf.nextIndex[server], len(rf.log))
+	// 如果下一条记录在log中判断他们一不一样
+	if rf.nextIndex[server] - 1 > 0 && len(rf.log) > 0 { // 判断这条记录是否对应啊
+		args.PrevLogIndex = rf.nextIndex[server] - 1
+		args.PrevLogTerm = rf.log[args.PrevLogIndex-1].CommandTerm
+		// if rf.nextIndex[server] > len(rf.log) {
+		// 	args.PrevLogIndex = rf.nextIndex[server] - 1
+		// 	args.PrevLogTerm = rf.log[args.PrevLogIndex-1].CommandTerm
+		// } else {
+		// 	args.PrevLogIndex = rf.log[MaxInt(0, rf.nextIndex[server]-1)].CommandIndex
+		// 	args.PrevLogTerm = rf.log[MaxInt(0, rf.nextIndex[server]-1)].CommandTerm
 		// }
-		args.PrevLogTerm = rf.log[MaxInt(0, rf.nextIndex[server]-1)].CommandTerm
 	}
-	if appendCMD { // replicate
-		args.Entries = rf.log[rf.nextIndex[server]:] // 每次都把足够的指令发过去从确认项的下一项开始
+	if appendCMD && rf.nextIndex[server]-1 < len(rf.log) { // replicate
+		args.Entries = rf.log[rf.nextIndex[server]-1:] // 每次都把足够的指令发过去从确认项的下一项开始
 	}
 	reply := AppendEntriesReply{}
 	return args, reply
@@ -45,7 +49,6 @@ func (rf *Raft) SendReplicate(server int, callback func(), retryTimes int) {
 	backOffTime := 100
 	for canFinish == false || haveSendAllCMD == false {
 		rf.mu.Lock()
-		DPrintf("[Follower] NextIndex[%v] = [%v]", server, rf.nextIndex[server])
 		// rpc是异步请求的所以请求时应当注意条件是否满足
 		if rf.state != Leader {
 			return
@@ -61,12 +64,14 @@ func (rf *Raft) SendReplicate(server int, callback func(), retryTimes int) {
 				return
 			} else { // 检测是否成功如果成功就可以发送后面的Entries了
 				if reply.Success {
+					DPrintf("[REPLY] Follower%v Agree with the CMD Index%v Term%v, ENT=%v", server, args.PrevLogIndex, args.PrevLogTerm, args.Entries)
 					if canFinish {
 						haveSendAllCMD = true
+						rf.nextIndex[server] = args.PrevLogIndex + len(args.Entries) + 1
 					}
 					canFinish = true
-					rf.nextIndex[server] = MaxInt(rf.nextIndex[server], args.PrevLogIndex+len(args.Entries)+1)
 				} else {
+					DPrintf("[REPLY] Follower%v REJECT the CMD Index%v Term%v, ENT=%v", server, args.PrevLogIndex, args.PrevLogTerm, args.Entries)
 					rf.nextIndex[server]--
 				}
 			}
@@ -86,6 +91,7 @@ func (rf *Raft) ReachAggreement() {
 	// var wg sync.WaitGroup
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("Leader%v>>>>>REACHAggreement %v, rf.log=%v", rf.me, rf.nextIndex, rf.log)
 	nextIndexOfMe := rf.log[len(rf.log)-1].CommandIndex + 1
 	needTicket := len(rf.peers)/2
 	// DPrintf("[Server] leader%v@term%v reaching agreement of index%v\n", rf.me, rf.currentTerm, nextIndexOfMe-1)
@@ -107,73 +113,22 @@ func (rf *Raft) ReachAggreement() {
 			continue
 		}
 		go rf.SendReplicate(server, callback, 0)
-		// wg.Add(1)
-		// 当有新的时 走一趟流程
-		// go func(server int) { // 反复通信看能否达成广泛共识
-		// 	// defer wg.Done()
-		// 	canFinish := false
-		// 	haveSendAllCMD := false
-		// 	backOffTime := 100
-		// 	for canFinish == false || haveSendAllCMD == false {
-		// 		rf.mu.Lock()
-		// 		// rpc是异步请求的所以请求时应当注意条件是否满足
-		// 		if rf.state != Leader {
-		// 			return
-		// 		}
-		// 		args, reply := rf.GetReplicateArgsAndReply(server, canFinish)
-		// 		rf.mu.Unlock()
-		// 		if ok := rf.sendAppendEntries(server, &args, &reply); ok {
-		// 			rf.mu.Lock()
-		// 			if reply.Term > rf.currentTerm { // 它照样起到heartbeat作用
-		// 				rf.ChangeState(Follower, true)
-		// 				rf.mu.Unlock()
-		// 				return
-		// 			} else { // 检测是否成功如果成功就可以发送后面的Entries了
-		// 				if reply.Success {
-		// 					if canFinish {
-		// 						haveSendAllCMD = true
-		// 					}
-		// 					canFinish = true
-		// 					rf.nextIndex[server] = MaxInt(rf.nextIndex[server], args.PrevLogIndex+len(args.Entries)+1)
-		// 				} else {
-		// 					rf.nextIndex[server]--
-		// 				}
-		// 			}
-		// 			rf.mu.Unlock()
-		// 		} else { // 如果掉线 类似二进制指数退让法 让他不要频繁的rpc
-		// 			DPrintf("[Server]+++++ Server%v dead when reaching agreement\n", server)
-		// 			backOffTime = rf.BackOff(backOffTime) // retry 的时候可能Leader已经寄了，说明agree还是得定时做一下
-		// 			DPrintf("[Server]+++++ Server%v Retry\n", server)
-		// 		}
-		// 	}
-		// 	callback()
-		// }(server)
 	}
 }
 
 func (rf *Raft) CheckIndex() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf(">>>>>>>>rf.nextIndex%v\n", rf.nextIndex)
+	DPrintf("Leader%v>>>>>CHECKINDEX %v, rf.log=%v", rf.me, rf.nextIndex, rf.log)
 	for server := 0; server < len(rf.peers); server++ {
 		if server == rf.me {
 			continue
 		}
-		if rf.nextIndex[server] < rf.commitIndex+1 {
-			DPrintf("[Server] leader%v@term%v checking index%v but follower%v,index%v\n", rf.me, rf.currentTerm, rf.commitIndex+1, server, rf.nextIndex[server])
-			go rf.SendReplicate(server, func() {}, 0)
-		}
-	}
-}
-
-func (rf *Raft) PeriodicallyCheckIndexTicker() {
-	for rf.killed() == false {
-		time.Sleep(time.Duration(getRand(rf.me))*time.Millisecond)
-		rf.mu.Lock()
-		if rf.state == Leader {
-			rf.CheckIndex()
-		}
-		rf.mu.Unlock()
+		go rf.SendReplicate(server, func() {}, 0)
+		// if rf.nextIndex[server] < rf.commitIndex+1 {
+		// 	DPrintf("[Leader%v] Server%v@term%v nextIndex%v < commitIndex%v\n", rf.me, server, rf.currentTerm, rf.nextIndex[server], rf.commitIndex)
+		// 	go rf.SendReplicate(server, func() {}, 0)
+		// }
 	}
 }
 
@@ -188,6 +143,7 @@ func (rf *Raft) CommandAgreementTicker() {
 			} else {
 				rf.mu.Unlock()
 				rf.CheckIndex()
+				time.Sleep(1000*time.Millisecond)
 			}
 		} else {
 			rf.mu.Unlock()

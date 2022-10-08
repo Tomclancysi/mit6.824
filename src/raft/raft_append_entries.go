@@ -1,6 +1,9 @@
 package raft
 
-import "time"
+import (
+	"math/rand"
+	"time"
+)
 
 type AppendEntriesArgs struct {
 	Term         int
@@ -61,12 +64,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.JoinEntries(args.Entries)
 	}
 	
-	if args.LeaderCommit > rf.commitIndex {
+	if args.LeaderCommit > rf.commitIndex && len(rf.log) > 0 {
 		n := rf.log[len(rf.log)-1].CommandIndex // log不一定有值把
 		N := MinInt(n, args.LeaderCommit)
 		go rf.SendFeedToClientByChan(rf.log[rf.commitIndex:N]) // 把commit范围内的执行了
 		rf.commitIndex = N
-		DPrintf("[Follower] Server%v commitIndex is %v, the log is %v;; reply.success=%v, args.Ent=%v\n", rf.me, rf.commitIndex, rf.log, reply.Success, args.Entries)
+	}
+	// 随机数小于0.1 则print
+	if rand.Float64() < 0.1 {
+		DPrintf("[Follower] Server%v commitIndex is %v, the log is %v", rf.me, rf.commitIndex, rf.log)
 	}
 	rf.mu.Unlock()
 }

@@ -118,6 +118,8 @@ func (rf *Raft) ReInitLeader() {
 		rf.nextIndex[i] = nextIndex // 这俩啥意思
 		rf.matchIndex[i] = 0
 	}
+	rf.commitIndex = len(rf.log) // 以往的都认为已经提交了
+	rf.SendFeedToClientByChan(rf.log)
 }
 
 // return currentTerm and whether this server
@@ -218,9 +220,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		CommandValid: true,
 		Command: command,
 		CommandIndex: index,
+		CommandTerm: term,
 		// default for 2D
 	})
-	DPrintf("[Leader] find new in logs%v\n", rf.log)
 	// start agreement and return quickly!!!!!! LeaderRoutine将会处理这些的！
 	return index, term, isLeader
 }
