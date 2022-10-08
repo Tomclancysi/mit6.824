@@ -220,6 +220,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		CommandIndex: index,
 		// default for 2D
 	})
+	DPrintf("[Leader] find new in logs%v\n", rf.log)
 	// start agreement and return quickly!!!!!! LeaderRoutine将会处理这些的！
 	return index, term, isLeader
 }

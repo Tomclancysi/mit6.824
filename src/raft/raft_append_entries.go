@@ -21,6 +21,22 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
+func (rf *Raft) JoinEntries(others []ApplyMsg) {
+	lastIndex := 1
+	if len(others) == 0 {
+		return
+	}
+	if len(rf.log) > 0 {
+		lastIndex = rf.log[len(rf.log)-1].CommandIndex + 1
+	}
+	for _, cmd := range others {
+		if cmd.CommandIndex == lastIndex {
+			lastIndex ++
+			rf.log = append(rf.log, cmd)
+		}
+	}
+}
+
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	if args.Term < rf.currentTerm {
@@ -40,9 +56,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.log = rf.log[:args.PrevLogIndex-1] // 删除掉不agree的部分
 	} else {
 		// DPrintf("[Server] Follower accept these log entries %v\n",args.Entries)
-		if len(args.Entries) > 0 {
-			rf.log = append(rf.log, args.Entries...)
-		}
+		rf.JoinEntries(args.Entries)
 	}
 	
 	if args.LeaderCommit > rf.commitIndex {
@@ -50,6 +64,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		N := MinInt(n, args.LeaderCommit)
 		go rf.SendFeedToClientByChan(rf.log[rf.commitIndex:N]) // 把commit范围内的执行了
 		rf.commitIndex = N
+		DPrintf("[Follower] Server%v commitIndex is %v, the log is %v\n", rf.me, rf.commitIndex, rf.log)
 	}
 	rf.mu.Unlock()
 }
