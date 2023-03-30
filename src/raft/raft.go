@@ -46,20 +46,18 @@ const (
 	Candidate = 1
 	Leader    = 2
 
-	
 	ELECTION_TIMEOUT_MAX = 300 // 修改这个确实会减少rpc次数
 	ELECTION_TIMEOUT_MIN = 150
+	ELECTION_TIMEOUT_INC = 30
 )
 
-func getRand(server int) int{
-	rand.Seed(time.Now().Unix()+int64(server))
-	return rand.Intn(ELECTION_TIMEOUT_MAX-ELECTION_TIMEOUT_MIN)+ELECTION_TIMEOUT_MIN
+func randSleepTime(server int) int {
+	return ELECTION_TIMEOUT_MIN + rand.Intn((server+1)*ELECTION_TIMEOUT_INC)
 }
 
-func(rf *Raft) heartBeatsExperied() bool {
+func (rf *Raft) heartBeatsExperied() bool {
 	return getCurrentTime()-rf.lastHeartBeat > ELECTION_TIMEOUT_MAX
 }
-
 
 type ApplyMsg struct {
 	CommandValid bool
@@ -89,13 +87,16 @@ type Raft struct {
 	votedFor    int
 	log         []ApplyMsg
 
-	applyCh		chan ApplyMsg
+	// 当真正执行完这个指令之时，发送到管道中
+	applyCh chan ApplyMsg
 
-	commitIndex int //这俩啥意思？
-	lastApplied int
-	// only for leader 每次当选leader都要更改
-	nextIndex  []int // 初始值是Leader的logIndex+1 ？
-	matchIndex []int // 初始为0
+	// ---此为所有服务器上都有的---
+	commitIndex int // 注意commit仅表示这一条指令被通过投票，准许执行
+	lastApplied int // 这才表示机器真正执行结束了这条指令
+
+	// ---only for leader 每次当选leader都要更改---
+	nextIndex  []int // 初始值是Leader的logIndex+1 ！ 这个值不可以下降
+	matchIndex []int // 初始为0，已知的复制到改服务器上的log，应该是为了处理哪些掉队的成员
 
 	// my custom variable
 	lastHeartBeat int64
@@ -201,28 +202,23 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	index := -1 // 如果他被commit了，它的位置在哪里？
-	for _, logEntry := range rf.log {
-		if logEntry.Command == command {
-			index = logEntry.CommandIndex // index是这个吗 还是下标？？
-			break
-		}
+	// 向raft提交一个事务，这个任务会被记在log中如果下一个周期就会告诉其他人
+	// IMPORTANT因此Leader的周期需要做两件事，确认新的Command，修正其他follower的log
+	if rf.state != Leader {
+		return -1, -1, false
 	}
+
 	term := rf.currentTerm
-	isLeader := rf.state == Leader
-	if isLeader == false || index != -1 { // 不是leader或者正在reachAgreement
-		return index, term, isLeader	
-	}
-	index = len(rf.log)+1 // 从1开始
+	nextIndex := len(rf.log) + 1 // 从1开始
 	rf.log = append(rf.log, ApplyMsg{
 		CommandValid: true,
-		Command: command,
-		CommandIndex: index,
+		Command:      command,
+		CommandIndex: nextIndex,
+		CommandTerm:  rf.currentTerm,
 		// default for 2D
 	})
-	DPrintf("[Leader] find new in logs%v\n", rf.log)
-	// start agreement and return quickly!!!!!! LeaderRoutine将会处理这些的！
-	return index, term, isLeader
+
+	return nextIndex, term, true
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -247,19 +243,19 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 // func (rf *Raft) ticker() {
-	// for rf.killed() == false {
-	// 	time.Sleep(time.Duration(getRand(rf.me)) * time.Millisecond)
+// for rf.killed() == false {
+// 	time.Sleep(time.Duration(getRand(rf.me)) * time.Millisecond)
 
-	// 	_, isLeader := rf.GetState()
-	// 	if isLeader {
-	// 		rf.LeaderRoutine()
-	// 	} else {
-	// 		if rf.heartBeatsExperied() {
-	// 			rf.ElectionRoutine()
-	// 		}
-	// 	}
+// 	_, isLeader := rf.GetState()
+// 	if isLeader {
+// 		rf.LeaderRoutine()
+// 	} else {
+// 		if rf.heartBeatsExperied() {
+// 			rf.ElectionRoutine()
+// 		}
+// 	}
 
-	// }
+// }
 // }
 
 // the service or tester wants to create a Raft server. the ports
@@ -290,7 +286,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
-	
+
 	// my custom variable
 	rf.lastHeartBeat = getCurrentTime()
 	rf.state = Follower
@@ -299,8 +295,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ElectionTicker()
-	go rf.LeaderTicker()
-	go rf.CommandAgreementTicker()
+	go rf.Ticker()
+	// go rf.CommandAgreementTicker()
 
 	return rf
 }

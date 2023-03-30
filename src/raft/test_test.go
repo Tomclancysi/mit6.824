@@ -172,7 +172,7 @@ func TestRPCBytes2B(t *testing.T) {
 	iters := 10
 	var sent int64 = 0
 	for index := 2; index < iters+2; index++ {
-		cmd := randstring(5000)//5000 先不改这里了 后面在说
+		cmd := randstring(5000) //5000 先不改这里了 后面在说
 		xindex := cfg.one(cmd, servers, false)
 		if xindex != index {
 			t.Fatalf("got index %v but expected %v", xindex, index)
@@ -289,7 +289,6 @@ func TestFailAgree2B(t *testing.T) {
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
 	cfg.disconnect((leader + 1) % servers)
-	DPrintf("[Test]>> Follower%v disconnected\n", (leader + 1) % servers)
 
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.
@@ -301,8 +300,6 @@ func TestFailAgree2B(t *testing.T) {
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
-	DPrintf("[Test]>> Follower%v reconnected\n", (leader + 1) % servers)
-	DPrintf("ADDING NEW 106 107!!!!!!!!!!!!")
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
@@ -478,6 +475,7 @@ func TestRejoin2B(t *testing.T) {
 	// leader network failure
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
+	DPrintf("!!!!!!!old leader%v failed", leader1)
 
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
@@ -490,10 +488,10 @@ func TestRejoin2B(t *testing.T) {
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
-
+	DPrintf("!!!!!!!new leader%v failed", leader2)
 	// old leader connected again
 	cfg.connect(leader1)
-
+	// time.Sleep(50 * time.Second)
 	cfg.one(104, 2, true)
 
 	// all together now
@@ -511,7 +509,12 @@ func TestBackup2B(t *testing.T) {
 
 	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
 
-	cfg.one(rand.Int(), servers, true)
+	randLog := 100
+	randlog := func() int {
+		randLog++
+		return randLog
+	}
+	cfg.one(999, servers, true)
 
 	// put leader and one follower in a partition
 	leader1 := cfg.checkOneLeader()
@@ -519,10 +522,11 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
 
-	// submit lots of commands that won't commit
+	// submit lots of commands that won't commit 11111111111
 	for i := 0; i < 50; i++ {
-		cfg.rafts[leader1].Start(rand.Int())
+		cfg.rafts[leader1].Start(randlog())
 	}
+	randLog = 200
 
 	time.Sleep(RaftElectionTimeout / 2)
 
@@ -534,10 +538,11 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
 
-	// lots of successful commands to new group.
+	// lots of successful commands to new group. 22222222222
 	for i := 0; i < 50; i++ {
-		cfg.one(rand.Int(), 3, true)
+		cfg.one(randlog(), 3, true)
 	}
+	randLog = 300
 
 	// now another partitioned leader and one follower
 	leader2 := cfg.checkOneLeader()
@@ -547,10 +552,11 @@ func TestBackup2B(t *testing.T) {
 	}
 	cfg.disconnect(other)
 
-	// lots more commands that won't commit
+	// lots more commands that won't commit 333333333333333333
 	for i := 0; i < 50; i++ {
-		cfg.rafts[leader2].Start(rand.Int())
+		cfg.rafts[leader2].Start(randlog())
 	}
+	randLog = 400
 
 	time.Sleep(RaftElectionTimeout / 2)
 
@@ -558,20 +564,23 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.disconnect(i)
 	}
-	cfg.connect((leader1 + 0) % servers)
+	cfg.connect((leader1 + 0) % servers) // 快速回退阶段
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
-
-	// lots of successful commands to new group.
+	DPrintf("SSSSSSSSSSSSSSSSSSSSSLEEP")
+	time.Sleep(30 * time.Second)
+	DPrintf("EEEEEEEEEEEEEEEEEEEEEEND")
+	// lots of successful commands to new group. 444444444444444
 	for i := 0; i < 50; i++ {
-		cfg.one(rand.Int(), 3, true)
+		cfg.one(randlog(), 3, true)
 	}
 
 	// now everyone
-	for i := 0; i < servers; i++ {
+	for i := 0; i < servers; i++ { // 快速回退
 		cfg.connect(i)
 	}
-	cfg.one(rand.Int(), servers, true)
+	time.Sleep(30 * time.Second)
+	cfg.one(666, servers, false) // 就是因为有retry 一条指令执行多次。。有问题这样，start是不是不要多次？？？
 
 	cfg.end()
 }

@@ -48,7 +48,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 		return
 	}
-	// 什么时候grant？ 
+	// 什么时候grant？
 	reply.Term = args.Term
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
@@ -60,7 +60,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateID {
 		reply.VoteGranted = false
 	} else {
-		// DPrintf("[Server] Server%v@Term%v vote for Server%v@Term%v\n", rf.me, rf.currentTerm, args.CandidateID, args.Term)
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateID
 		rf.ChangeState(Follower, true)
@@ -68,8 +67,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) ChangeState(state int, refresh bool) {
-	// stateName := [] string {"Follower", "Candidate", "Leader"}
-	// DPrintf("[Server] Server%v@Term%v state change from %v to %v", rf.me, rf.currentTerm, stateName[rf.state], stateName[state])
 	if state == Follower {
 		rf.state = Follower
 		rf.votedFor = -1
@@ -79,23 +76,21 @@ func (rf *Raft) ChangeState(state int, refresh bool) {
 	} else if state == Candidate { // 如果变身候选人 则开启一轮投票
 		rf.state = Candidate
 		rf.currentTerm++
-		rf.ElectionRoutine()
 	} else {
-		// DPrintf("[Server] Server%v@Term%v is select as Leader!!!\n", rf.me, rf.currentTerm)
 		rf.state = Leader
 	}
 }
 
 func (rf *Raft) ElectionRoutine() {
 	needTicket := int32(len(rf.peers) / 2)
-	for server := 0; server < len(rf.peers); server ++ {
+	for server := 0; server < len(rf.peers); server++ {
 		if server == rf.me {
 			continue
 		}
-		go func(server int){
+		go func(server int) {
 			rf.mu.Lock()
 			args := RequestVoteArgs{
-				Term: rf.currentTerm, // 这个Term可能不是刚进来的term了，需要判断，传参时传入copy
+				Term:        rf.currentTerm, // 这个Term可能不是刚进来的term了，需要判断，传参时传入copy
 				CandidateID: rf.me,
 			}
 			if len(rf.log) > 0 {
@@ -134,14 +129,53 @@ func (rf *Raft) ElectionRoutine() {
 
 func (rf *Raft) ElectionTicker() {
 	// 随机睡一段时间醒来如果没有tick 开始选举
-	for rf.killed() == false {
+	for !rf.killed() {
 		curTime := getCurrentTime()
-		time.Sleep(time.Duration(getRand(rf.me))*time.Millisecond)
+		time.Sleep(time.Duration(randSleepTime(rf.me)) * time.Millisecond)
 		rf.mu.Lock()
 		if rf.lastHeartBeat < curTime && rf.state != Leader {
-			// rf.mu.Unlock()
-			rf.ChangeState(Candidate, false)
+			if rf.state == Candidate {
+				// 已经是候选人了 为什么还会再次选举？这不正常
+
+				rf.ChangeState(Follower, false)
+			} else {
+				rf.ChangeState(Candidate, false)
+				rf.ElectionRoutine()
+			}
 		}
-		rf.mu.Unlock()	
+		rf.mu.Unlock()
+	}
+}
+
+func (rf *Raft) AllServerRoutine() {
+	// commitIndex > lastApplied
+	rf.PrintCurState()
+	if len(rf.log) > 0 && rf.log[len(rf.log)-1].CommandIndex < rf.commitIndex {
+		DPrintf("fuck u %v, %v", rf.log, rf.commitIndex)
+		panic("fuck u not ")
+	}
+	if rf.commitIndex > rf.lastApplied {
+		rf.lastApplied++
+		go func() {
+			// apply并且告诉客户端
+			// DPrintf("(AllServerRoutine)[%d,%d]SEND TO CLIENT %v, %v, isleader=%v", rf.me, rf.currentTerm, rf.log, rf.lastApplied-1, rf.state == Leader)
+			rf.applyCh <- rf.log[rf.lastApplied-1]
+		}()
+	}
+}
+
+func (rf *Raft) Ticker() {
+	// Server每隔一段时间就要操作
+	for !rf.killed() {
+		curTime := getCurrentTime()
+		time.Sleep(time.Duration(ELECTION_TIMEOUT_MIN) * time.Millisecond)
+		rf.mu.Lock()
+		if rf.lastHeartBeat < curTime && rf.state == Leader {
+			rf.LeaderRoutine()
+		}
+
+		rf.AllServerRoutine()
+
+		rf.mu.Unlock()
 	}
 }
