@@ -159,7 +159,6 @@ func TestBasicAgree2B(t *testing.T) {
 // check, based on counting bytes of RPCs, that
 // each command is sent to each peer just once.
 func TestRPCBytes2B(t *testing.T) {
-	return
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -568,7 +567,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
 	DPrintf("SSSSSSSSSSSSSSSSSSSSSLEEP")
-	time.Sleep(30 * time.Second)
+	// time.Sleep(30 * time.Second)
 	DPrintf("EEEEEEEEEEEEEEEEEEEEEEND")
 	// lots of successful commands to new group. 444444444444444
 	for i := 0; i < 50; i++ {
@@ -579,8 +578,8 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < servers; i++ { // 快速回退
 		cfg.connect(i)
 	}
-	time.Sleep(30 * time.Second)
-	cfg.one(666, servers, false) // 就是因为有retry 一条指令执行多次。。有问题这样，start是不是不要多次？？？
+	// time.Sleep(30 * time.Second)
+	cfg.one(666, servers, true) // 就是因为有retry 一条指令执行多次。。有问题这样，start是不是不要多次？？？
 
 	cfg.end()
 }

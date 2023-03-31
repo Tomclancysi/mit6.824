@@ -44,7 +44,7 @@ func (rf *Raft) PrintCurState() {
 
 }
 
-func (rf *Raft) GetReplicateArgsAndReply(server int) (AppendEntriesArgs, AppendEntriesReply) {
+func (rf *Raft) GetReplicateArgsAndReply(server int, appendCMD bool) (AppendEntriesArgs, AppendEntriesReply) {
 	// 当发送一次rpc，应该发给它什么？
 	// 1. PrevLogIndex，PrevLogTerm。 leader需要通过rpc的方式，自动确认客户端的log到底在哪
 	//    这就涉及到leader和follower battle的过程。也就是和nextIndex和matchIndex battle。
@@ -91,7 +91,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Success = true
 	reply.Term = rf.currentTerm
 
-	// TODO fuck prevlogindex不清楚，battle，如果
+	// battle，如果
 	rf.ChangeState(Follower, true)
 
 	// 2. 和Leader确认当前PrevIndex判断指定位置的Term Index相同返回true
@@ -100,8 +100,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.PrevLogIndex > len(rf.log) ||
 			(rf.log[args.PrevLogIndex-1].CommandTerm != args.PrevLogTerm) { // this term is not commandterm. eeeeeee
 			reply.Success = false
+			reply.Conflict = true
 			if args.PrevLogIndex <= len(rf.log) {
-				rf.log = rf.log[:args.PrevLogIndex-1] // 删除掉不agree的部分
+				xterm := rf.log[args.PrevLogIndex-1].CommandTerm
+				xindex := 0
+				for i := args.PrevLogIndex - 1; i >= 0; i-- {
+					if rf.log[i].CommandTerm != xterm {
+						xindex = i + 1
+						break
+					}
+				}
+				reply.XIndex = xindex
+				reply.XTerm = xterm
+				reply.XLen = len(rf.log)
+				// 删除掉不agree的部分
+				rf.log = rf.log[:args.PrevLogIndex-1]
+			} else {
+				reply.XIndex = -1
+				reply.XTerm = -1 // xterm 为-1表示不予置评
+				reply.XLen = len(rf.log)
 			}
 			return
 		}
@@ -153,7 +170,7 @@ func (rf *Raft) LeaderRoutine() {
 				return
 			}
 			// 准备发送rpc
-			args, reply := rf.GetReplicateArgsAndReply(server)
+			args, reply := rf.GetReplicateArgsAndReply(server, false)
 			rf.mu.Unlock()
 
 			if ok := rf.sendAppendEntries(server, &args, &reply); ok {
@@ -174,8 +191,25 @@ func (rf *Raft) LeaderRoutine() {
 						// 注意：其实这里不需要一直请求直到半数以上的满足要求，而是通过检查log的方式
 					} else {
 						// MaybeBugPoint以非常慢的速度下降，同样警惕失效rpc，如果失效了会怎么样
+						// 如何使用xterm优化
 						if args.PrevLogIndex == rf.nextIndex[server]-1 {
-							rf.nextIndex[server] = args.PrevLogIndex
+							if reply.Conflict {
+								curIndex := args.PrevLogIndex
+								xterm := reply.XTerm
+								xindex := reply.XIndex
+								if xterm < 0 {
+									rf.nextIndex[server] = reply.XLen // 直接检查最后一条
+								} else {
+									for ; curIndex > xindex && curIndex > 0; curIndex-- {
+										if rf.log[curIndex-1].CommandTerm == xterm {
+											break
+										}
+									}
+									rf.nextIndex[server] = curIndex + 1
+								}
+							} else {
+								rf.nextIndex[server] = args.PrevLogIndex // 太慢了
+							}
 						}
 					}
 				}

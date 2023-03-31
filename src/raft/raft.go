@@ -18,7 +18,7 @@ package raft
 //
 
 import (
-	//	"bytes"
+	"bytes"
 
 	"math/rand"
 	"sync"
@@ -26,6 +26,7 @@ import (
 	"time"
 
 	//	"6.824/labgob"
+	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -76,7 +77,7 @@ type ApplyMsg struct {
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers 这是啥
-	persister *Persister          // Object to hold this peer's persisted state
+	persister *Persister          // Object to hold this peer's persisted state，只有currentTerm，log，commitIndex需要保存下来
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
 
@@ -146,6 +147,13 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor) // 为什么要把voteFor 放进去？
+	e.Encode(rf.log)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 // restore previously persisted state.
@@ -166,6 +174,22 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	var currentTerm int
+	var votedFor int
+	var log []ApplyMsg
+
+	if d.Decode(&currentTerm) != nil ||
+		d.Decode(&votedFor) != nil ||
+		d.Decode(&log) != nil {
+		return
+	} else {
+		rf.currentTerm = currentTerm
+		rf.votedFor = votedFor
+		rf.log = log
+	}
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
