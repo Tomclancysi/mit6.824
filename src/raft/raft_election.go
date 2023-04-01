@@ -51,7 +51,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// 什么时候grant？
 	reply.Term = args.Term
 	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
+		rf.gotoTerm(args.Term)
+		rf.persist()
 	}
 	if rf.MoreUpToDateThan(args.LastLogTerm, args.LastLogIndex) {
 		reply.VoteGranted = false
@@ -62,24 +63,26 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateID
-		rf.ChangeState(Follower, true)
+		rf.state = Follower
+		rf.persist()
+		rf.resetElectionTimer()
 	}
 }
 
-func (rf *Raft) ChangeState(state int, refresh bool) {
-	if state == Follower {
-		rf.state = Follower
-		rf.votedFor = -1
-		if refresh {
-			rf.lastHeartBeat = getCurrentTime()
-		}
-	} else if state == Candidate { // 如果变身候选人 则开启一轮投票
-		rf.state = Candidate
-		rf.currentTerm++
-	} else {
-		rf.state = Leader
-	}
-}
+// func (rf *Raft) ChangeState(state int, refresh bool) {
+// 	if state == Follower {
+// 		rf.state = Follower
+// 		// rf.votedFor = -1
+// 		if refresh {
+// 			rf.lastHeartBeat = getCurrentTime()
+// 		}
+// 	} else if state == Candidate { // 如果变身候选人 则开启一轮投票
+// 		rf.state = Candidate
+// 		rf.currentTerm++
+// 	} else {
+// 		rf.state = Leader
+// 	}
+// }
 
 func (rf *Raft) ElectionRoutine() {
 	needTicket := int32(len(rf.peers) / 2)
@@ -103,20 +106,20 @@ func (rf *Raft) ElectionRoutine() {
 			if ok {
 				rf.mu.Lock()
 				if reply.Term > rf.currentTerm {
-					rf.ChangeState(Follower, false)
+					rf.gotoTerm(reply.Term)
+					rf.state = Follower
+					rf.persist()
+					rf.resetElectionTimer()
 					rf.mu.Unlock()
 					return
-				} else if reply.Term < rf.currentTerm {
-					rf.mu.Unlock()
-					return
-				}
-				if rf.state != Candidate {
+				} else if reply.Term < rf.currentTerm || rf.state != Candidate {
+					// 过时了
 					rf.mu.Unlock()
 					return
 				}
 				if reply.VoteGranted {
 					if atomic.AddInt32(&needTicket, -1) <= 0 && rf.state != Leader {
-						rf.ChangeState(Leader, false)
+						rf.state = Leader
 						rf.ReInitLeader()
 						rf.LeaderRoutine()
 					}
@@ -135,11 +138,14 @@ func (rf *Raft) ElectionTicker() {
 		rf.mu.Lock()
 		if rf.lastHeartBeat < curTime && rf.state != Leader {
 			if rf.state == Candidate {
-				// 已经是候选人了 为什么还会再次选举？这不正常
-
-				rf.ChangeState(Follower, false)
+				// 已经是候选人了 为什么还会再次选举？这不正常 应该继续等待选举结果
+				rf.state = Follower
+				rf.resetElectionTimer()
 			} else {
-				rf.ChangeState(Candidate, false)
+				rf.state = Candidate
+				rf.currentTerm++
+				rf.votedFor = rf.me
+				rf.persist()
 				rf.ElectionRoutine()
 			}
 		}
@@ -157,7 +163,7 @@ func (rf *Raft) AllServerRoutine() {
 	if rf.commitIndex > rf.lastApplied {
 		rf.lastApplied++
 		go func() {
-			// apply并且告诉客户端
+			// bugpoint apply并且告诉客户端，如果leader的commitIndex++了，它的消息可能还没传给majority就寄了，应该等majority的commitIndex都承认了，然后才apply
 			// DPrintf("(AllServerRoutine)[%d,%d]SEND TO CLIENT %v, %v, isleader=%v", rf.me, rf.currentTerm, rf.log, rf.lastApplied-1, rf.state == Leader)
 			rf.applyCh <- rf.log[rf.lastApplied-1]
 		}()

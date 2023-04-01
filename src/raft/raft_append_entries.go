@@ -92,7 +92,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = rf.currentTerm
 
 	// battle，如果
-	rf.ChangeState(Follower, true)
+	rf.state = Follower
+	rf.votedFor = args.LeaderId
+	rf.resetElectionTimer()
 
 	// 2. 和Leader确认当前PrevIndex判断指定位置的Term Index相同返回true
 	if args.PrevLogIndex > 0 {
@@ -115,6 +117,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				reply.XLen = len(rf.log)
 				// 删除掉不agree的部分
 				rf.log = rf.log[:args.PrevLogIndex-1]
+				rf.persist()
 			} else {
 				reply.XIndex = -1
 				reply.XTerm = -1 // xterm 为-1表示不予置评
@@ -143,6 +146,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.LeaderCommit > rf.commitIndex {
 		if len(rf.log) == 0 {
+			rf.persist()
 			return
 		}
 
@@ -152,6 +156,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 为什么commit的index  log里面都没有？
 		rf.commitIndex = finalCommitIndex
 	}
+	rf.persist()
 	// DPrintf("(AppendEntries)[%d,%d] %v, commitIndex=%v", rf.me, rf.currentTerm, rf.log, rf.commitIndex)
 }
 
@@ -176,7 +181,10 @@ func (rf *Raft) LeaderRoutine() {
 			if ok := rf.sendAppendEntries(server, &args, &reply); ok {
 				rf.mu.Lock()
 				if reply.Term > rf.currentTerm {
-					rf.ChangeState(Follower, true)
+					rf.state = Follower
+					rf.votedFor = -1
+					rf.persist()
+					rf.resetElectionTimer()
 				} else {
 					if args.Term != rf.currentTerm {
 						rf.mu.Unlock()
@@ -220,7 +228,8 @@ func (rf *Raft) LeaderRoutine() {
 
 	// 3. 确认新事务
 
-	nextCommitIndex := rf.commitIndex + 1
+	nextCommitIndex := rf.commitIndex + 1 // bugpoint persist竟然不需要commitIndex这是因为有了也没用，不能根据这个判断
+	// 那已经applied了之后的，如何避免再次applied？？
 	alreadyInLog := 1
 	for server, _ := range rf.peers {
 		if server == rf.me {

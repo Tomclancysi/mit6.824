@@ -60,6 +60,20 @@ func (rf *Raft) heartBeatsExperied() bool {
 	return getCurrentTime()-rf.lastHeartBeat > ELECTION_TIMEOUT_MAX
 }
 
+func (rf *Raft) gotoTerm(target int) {
+	rf.currentTerm = target
+	rf.votedFor = -1
+}
+
+func (rf *Raft) gotoNextTerm() {
+	rf.currentTerm++
+	rf.votedFor = -1
+}
+
+func (rf *Raft) resetElectionTimer() {
+	rf.lastHeartBeat = getCurrentTime()
+}
+
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -241,7 +255,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		CommandTerm:  rf.currentTerm,
 		// default for 2D
 	})
-
+	rf.persist()
 	return nextIndex, term, true
 }
 
@@ -314,7 +328,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// my custom variable
 	rf.lastHeartBeat = getCurrentTime()
 	rf.state = Follower
-	// initialize from state persisted before a crash
+	// initialize from state persisted before a crash // 是不是要经常的persist
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
