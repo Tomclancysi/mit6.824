@@ -156,18 +156,20 @@ func (rf *Raft) ElectionTicker() {
 func (rf *Raft) AllServerRoutine() {
 	// commitIndex > lastApplied
 	rf.PrintCurState()
-	if len(rf.log) > 0 && rf.log[len(rf.log)-1].CommandIndex < rf.commitIndex {
-		DPrintf("fuck u %v, %v", rf.log, rf.commitIndex)
-		panic("fuck u not ")
-	}
-	if rf.commitIndex > rf.lastApplied {
-		rf.lastApplied++
-		lastApplied := rf.lastApplied
-		go func() {
-			// bugpoint apply并且告诉客户端，如果leader的commitIndex++了，它的消息可能还没传给majority就寄了，应该等majority的commitIndex都承认了，然后才apply
-			rf.applyCh <- ApplyMsg{CommandValid: true, Command: rf.logAt(lastApplied).Command, CommandIndex: lastApplied}
-		}()
-	}
+	// if len(rf.log) > 0 && rf.log[len(rf.log)-1].CommandIndex < rf.commitIndex {
+	// 	DPrintf("fuck u %v, %v", rf.log, rf.commitIndex)
+	// 	panic("fuck u not ")
+	// }
+	// if rf.commitIndex > rf.lastApplied {
+	// 	// 搞一个不那么鲁棒的版本先，不如一步到位。
+	// 	rf.lastApplied++
+	// 	lastApplied := rf.lastApplied
+	// 	go func() {
+	// 		// bugpoint apply并且告诉客户端，如果leader的commitIndex++了，它的消息可能还没传给majority就寄了，应该等majority的commitIndex都承认了，然后才apply
+	// 		rf.applyCh <- ApplyMsg{CommandValid: true, Command: rf.logAt(lastApplied).Command, CommandIndex: lastApplied}
+	// 		DPrintf("Server%v apply cmd=%v with index=%v", rf.me, rf.logAt(lastApplied).Command, lastApplied)
+	// 	}()
+	// }
 }
 
 func (rf *Raft) Ticker() {

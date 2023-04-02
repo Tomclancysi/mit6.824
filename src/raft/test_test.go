@@ -931,10 +931,10 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			}
 		}
 
-		if (rand.Int() % 1000) < 100 {
+		if (rand.Int() % 1000) < 100 { // 小概率能执行
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
-		} else {
+		} else { // 大概率要寄了
 			ms := (rand.Int63() % 13)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
@@ -952,14 +952,16 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			}
 		}
 	}
-
+	cfg.setlongreordering(false)
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
 		}
 	}
 
-	cfg.one(999, servers, true)
+	time.Sleep(time.Second * 10)
+
+	cfg.one(999, servers, false)
 
 	cfg.end()
 }

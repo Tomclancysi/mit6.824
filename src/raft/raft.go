@@ -116,6 +116,7 @@ type Raft struct {
 	// my custom variable
 	lastHeartBeat int64
 	state         int
+	applyCond     *sync.Cond
 }
 
 // function get current time in millisecond
@@ -123,6 +124,7 @@ func getCurrentTime() int64 {
 	return time.Now().UnixNano() / 1e6
 }
 
+// help function for log
 func (rf *Raft) getLastLogIndex() int {
 	if len(rf.log) == 0 {
 		return 0
@@ -145,6 +147,7 @@ func (rf *Raft) logAt(index int) *ApplyMsg {
 	return &rf.log[index-1]
 }
 
+// Leader initiate
 func (rf *Raft) ReInitLeader() {
 	var nextIndex int
 	if len(rf.log) == 0 {
@@ -350,13 +353,41 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// my custom variable
 	rf.lastHeartBeat = getCurrentTime()
 	rf.state = Follower
+	rf.applyCond = sync.NewCond(&rf.mu)
 	// initialize from state persisted before a crash // 是不是要经常的persist
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.ElectionTicker()
 	go rf.Ticker()
+	go rf.applier()
 	// go rf.CommandAgreementTicker()
 
 	return rf
+}
+
+func (rf *Raft) apply() {
+	rf.applyCond.Broadcast()
+}
+
+func (rf *Raft) applier() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	for !rf.killed() {
+		if rf.commitIndex > rf.lastApplied && rf.getLastLogIndex() > rf.lastApplied {
+			rf.lastApplied++
+			applyMsg := ApplyMsg{
+				CommandValid: true,
+				Command:      rf.logAt(rf.lastApplied).Command,
+				CommandIndex: rf.lastApplied,
+			}
+			DPrintf("Server %v apply %v", rf.me, rf.lastApplied)
+			rf.mu.Unlock()
+			rf.applyCh <- applyMsg
+			rf.mu.Lock()
+		} else {
+			rf.applyCond.Wait()
+		}
+	}
 }

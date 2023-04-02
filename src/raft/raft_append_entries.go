@@ -155,6 +155,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// BugPoint更新commitID之后是不是周期性的提交一下任务？？ 但是应该搞一个单独的协程
 		// 为什么commit的index  log里面都没有？
 		rf.commitIndex = finalCommitIndex
+		rf.apply()
 	}
 	rf.persist()
 	// DPrintf("(AppendEntries)[%d,%d] %v, commitIndex=%v", rf.me, rf.currentTerm, rf.log, rf.commitIndex)
@@ -228,7 +229,7 @@ func (rf *Raft) LeaderRoutine() {
 
 	// 3. 确认新事务
 	// 从最大的index开始往前遍历
-	for i := rf.getLastLogIndex(); i > rf.commitIndex; i-- {
+	for i := rf.commitIndex + 1; i <= rf.getLastLogIndex(); i++ {
 		matchCount := 1
 		for j := range rf.peers {
 			if j == rf.me {
@@ -240,7 +241,7 @@ func (rf *Raft) LeaderRoutine() {
 		}
 		if matchCount*2 > len(rf.peers) {
 			rf.commitIndex = i
-			break
+			rf.apply()
 		}
 	}
 
