@@ -838,17 +838,17 @@ func TestFigure82C(t *testing.T) {
 		leader := -1
 		for i := 0; i < servers; i++ {
 			if cfg.rafts[i] != nil {
-				_, _, ok := cfg.rafts[i].Start(rand.Int())
+				_, _, ok := cfg.rafts[i].Start(rand.Int()) // 开始一条命令
 				if ok {
 					leader = i
 				}
 			}
 		}
 
-		if (rand.Int() % 1000) < 100 {
+		if (rand.Int() % 1000) < 100 { // 很小的概率 很长时间才挂
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
-		} else {
+		} else { // 大概率一会就挂了
 			ms := (rand.Int63() % 13)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
@@ -875,7 +875,7 @@ func TestFigure82C(t *testing.T) {
 		}
 	}
 
-	cfg.one(rand.Int(), servers, true)
+	cfg.one(999, servers, true)
 
 	cfg.end()
 }
@@ -940,7 +940,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 
 		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
-			cfg.disconnect(leader)
+			cfg.disconnect(leader) // leader is unrealiable, network bad
 			nup -= 1
 		}
 
@@ -959,7 +959,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
-	cfg.one(rand.Int()%10000, servers, true)
+	cfg.one(999, servers, true)
 
 	cfg.end()
 }

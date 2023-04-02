@@ -162,10 +162,10 @@ func (rf *Raft) AllServerRoutine() {
 	}
 	if rf.commitIndex > rf.lastApplied {
 		rf.lastApplied++
+		lastApplied := rf.lastApplied
 		go func() {
 			// bugpoint apply并且告诉客户端，如果leader的commitIndex++了，它的消息可能还没传给majority就寄了，应该等majority的commitIndex都承认了，然后才apply
-			// DPrintf("(AllServerRoutine)[%d,%d]SEND TO CLIENT %v, %v, isleader=%v", rf.me, rf.currentTerm, rf.log, rf.lastApplied-1, rf.state == Leader)
-			rf.applyCh <- rf.log[rf.lastApplied-1]
+			rf.applyCh <- ApplyMsg{CommandValid: true, Command: rf.logAt(lastApplied).Command, CommandIndex: lastApplied}
 		}()
 	}
 }

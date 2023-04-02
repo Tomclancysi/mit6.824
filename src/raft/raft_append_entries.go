@@ -35,7 +35,7 @@ func (rf *Raft) PrintCurState() {
 			stack += fmt.Sprintf(" %v,%v ", rf.log[i-1].Command, rf.log[i-1].CommandTerm)
 		}
 	}
-	stack += fmt.Sprintf("|%v", rf.commitIndex)
+	stack += fmt.Sprintf("|<%v, %v>", rf.commitIndex, rf.lastApplied)
 	if rf.state == Leader {
 		DPrintf("T%v!!!!!!!!!Server%v : %v", rf.currentTerm, rf.me, stack)
 	} else {
@@ -202,14 +202,14 @@ func (rf *Raft) LeaderRoutine() {
 						// 如何使用xterm优化
 						if args.PrevLogIndex == rf.nextIndex[server]-1 {
 							if reply.Conflict {
-								curIndex := args.PrevLogIndex
 								xterm := reply.XTerm
 								xindex := reply.XIndex
 								if xterm < 0 {
 									rf.nextIndex[server] = reply.XLen // 直接检查最后一条
 								} else {
+									curIndex := args.PrevLogIndex - 1
 									for ; curIndex > xindex && curIndex > 0; curIndex-- {
-										if rf.log[curIndex-1].CommandTerm == xterm {
+										if rf.getLogTerm(curIndex) == xterm {
 											break
 										}
 									}
@@ -227,20 +227,36 @@ func (rf *Raft) LeaderRoutine() {
 	}
 
 	// 3. 确认新事务
+	// 从最大的index开始往前遍历
+	for i := rf.getLastLogIndex(); i > rf.commitIndex; i-- {
+		matchCount := 1
+		for j := range rf.peers {
+			if j == rf.me {
+				continue
+			}
+			if rf.matchIndex[j] >= i && rf.getLogTerm(i) == rf.currentTerm {
+				matchCount++
+			}
+		}
+		if matchCount*2 > len(rf.peers) {
+			rf.commitIndex = i
+			break
+		}
+	}
 
-	nextCommitIndex := rf.commitIndex + 1 // bugpoint persist竟然不需要commitIndex这是因为有了也没用，不能根据这个判断
-	// 那已经applied了之后的，如何避免再次applied？？
-	alreadyInLog := 1
-	for server, _ := range rf.peers {
-		if server == rf.me {
-			continue
-		}
-		if rf.matchIndex[server] >= nextCommitIndex {
-			alreadyInLog++
-		}
-	}
-	if alreadyInLog > int(len(rf.peers)/2) {
-		rf.commitIndex = nextCommitIndex
-		// DPrintf("(LeaderRoutine)[%d,%d]curCommitIndex=%v", rf.me, rf.currentTerm, rf.commitIndex)
-	}
+	// nextCommitIndex := rf.commitIndex + 1 // bugpoint persist竟然不需要commitIndex这是因为有了也没用，不能根据这个判断
+	// // 那已经applied了之后的，如何避免再次applied？？
+	// alreadyInLog := 1
+	// for server, _ := range rf.peers {
+	// 	if server == rf.me {
+	// 		continue
+	// 	}
+	// 	if rf.matchIndex[server] >= nextCommitIndex {
+	// 		alreadyInLog++
+	// 	}
+	// }
+	// if alreadyInLog > int(len(rf.peers)/2) {
+	// 	rf.commitIndex = nextCommitIndex
+	// 	// DPrintf("(LeaderRoutine)[%d,%d]curCommitIndex=%v", rf.me, rf.currentTerm, rf.commitIndex)
+	// }
 }

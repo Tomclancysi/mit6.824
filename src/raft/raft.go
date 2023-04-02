@@ -123,6 +123,28 @@ func getCurrentTime() int64 {
 	return time.Now().UnixNano() / 1e6
 }
 
+func (rf *Raft) getLastLogIndex() int {
+	if len(rf.log) == 0 {
+		return 0
+	} else {
+		return rf.log[len(rf.log)-1].CommandIndex
+	}
+}
+
+func (rf *Raft) getLogTerm(index int) int {
+	return rf.log[index-1].CommandTerm
+}
+
+func (rf *Raft) applyLogs(logs []ApplyMsg) {
+	for _, log := range logs {
+		rf.applyCh <- log
+	}
+}
+
+func (rf *Raft) logAt(index int) *ApplyMsg {
+	return &rf.log[index-1]
+}
+
 func (rf *Raft) ReInitLeader() {
 	var nextIndex int
 	if len(rf.log) == 0 {
