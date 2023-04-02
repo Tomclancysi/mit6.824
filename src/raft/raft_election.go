@@ -29,12 +29,14 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) MoreUpToDateThan(LastLogTerm int, lastLogIndex int) bool {
-	L := len(rf.log)
-	if L == 0 {
+	if rf.getLastLogIndex() == 0 {
 		return false
 	}
-	lastLog := rf.log[L-1]
-	return (lastLog.CommandTerm == LastLogTerm && lastLog.CommandIndex > lastLogIndex) || (lastLog.CommandTerm > LastLogTerm)
+	// lastLog := rf.logAt(rf.getLastLogIndex())
+	// return (lastLog.CommandTerm == LastLogTerm && lastLog.CommandIndex > lastLogIndex) || (lastLog.CommandTerm > LastLogTerm)
+	lastTerm := rf.getLastLogTerm()
+	lastIndex := rf.getLastLogIndex()
+	return (lastTerm == LastLogTerm && lastIndex > lastLogIndex) || (lastTerm > LastLogTerm)
 }
 
 // example RequestVote RPC handler.
@@ -96,9 +98,10 @@ func (rf *Raft) ElectionRoutine() {
 				Term:        rf.currentTerm, // 这个Term可能不是刚进来的term了，需要判断，传参时传入copy
 				CandidateID: rf.me,
 			}
-			if len(rf.log) > 0 {
-				args.LastLogIndex = rf.log[len(rf.log)-1].CommandIndex
-				args.LastLogTerm = rf.log[len(rf.log)-1].CommandTerm
+			if rf.getLastLogIndex() > 0 {
+				// lastLog := rf.logAt(rf.getLastLogIndex())
+				args.LastLogIndex = rf.getLastLogIndex() // log 真tm应该单独搞个类维护，因为设计很多操作而不仅仅是个数组
+				args.LastLogTerm = rf.getLastLogTerm()
 			}
 			rf.mu.Unlock()
 			reply := RequestVoteReply{}

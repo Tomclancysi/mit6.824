@@ -28,7 +28,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 func (rf *Raft) PrintCurState() {
 	stack := ""
 	for i := 1; i <= len(rf.log); i++ {
-		if rf.commitIndex >= i {
+		if rf.commitIndex >= rf.log[i-1].CommandIndex {
 			// stack += fmt.Sprintf("[%v]", rf.log[i-1].CommandIndex)
 			stack += fmt.Sprintf("[%v,%v]", rf.log[i-1].Command, rf.log[i-1].CommandTerm)
 		} else {
@@ -60,8 +60,8 @@ func (rf *Raft) GetReplicateArgsAndReply(server int, appendCMD bool) (AppendEntr
 	// impl1 ： nextIndex始终大于等于1，我需要验证它的上一条能否对齐
 	if rf.nextIndex[server]-1 > 0 { // 判断这条记录是否对应啊
 		args.PrevLogIndex = rf.nextIndex[server] - 1
-		args.PrevLogTerm = rf.log[args.PrevLogIndex-1].CommandTerm
-		args.Entries = rf.log[args.PrevLogIndex:] // 如果上一个index确认，发送这后面的即可
+		args.PrevLogTerm = rf.logAt(args.PrevLogIndex).CommandTerm //rf.log[args.PrevLogIndex-1].CommandTerm
+		args.Entries = rf.truncateAfter(args.PrevLogIndex)         // rf.log[args.PrevLogIndex:] // 如果上一个index确认，发送这后面的即可
 	} else {
 		// 不需要验证
 		args.PrevLogIndex = 0
@@ -99,44 +99,41 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 2. 和Leader确认当前PrevIndex判断指定位置的Term Index相同返回true
 	if args.PrevLogIndex > 0 {
 		// 需要确认,如果该位置没有值或者有值且不一样，删除该位置和它之后的log
-		if args.PrevLogIndex > len(rf.log) ||
-			(rf.log[args.PrevLogIndex-1].CommandTerm != args.PrevLogTerm) { // this term is not commandterm. eeeeeee
+		if args.PrevLogIndex > rf.getLastLogIndex() ||
+			(args.PrevLogIndex > rf.lastIncludingIndex && rf.logAt(args.PrevLogIndex).CommandTerm != args.PrevLogTerm) { // this term is not commandterm. eeeeeee
 			reply.Success = false
 			reply.Conflict = true
-			if args.PrevLogIndex <= len(rf.log) {
-				xterm := rf.log[args.PrevLogIndex-1].CommandTerm
-				xindex := 0
-				for i := args.PrevLogIndex - 1; i >= 0; i-- {
-					if rf.log[i].CommandTerm != xterm {
-						xindex = i + 1
+			if args.PrevLogIndex <= rf.getLastLogIndex() {
+				xterm := rf.logAt(args.PrevLogIndex).CommandTerm
+				xindex := 0 // 2D todo 如果要支持snapshot，这里应该怎么改？
+				for i := args.PrevLogIndex - 1; i > 0 && i > rf.lastIncludingIndex; i-- {
+					if rf.logAt(i).CommandTerm != xterm {
+						xindex = i
 						break
 					}
 				}
 				reply.XIndex = xindex
 				reply.XTerm = xterm
-				reply.XLen = len(rf.log)
+				reply.XLen = len(rf.log) // 2D todo
 				// 删除掉不agree的部分
-				rf.log = rf.log[:args.PrevLogIndex-1]
+				rf.log = rf.truncateIncBefore(args.PrevLogIndex - 1) // rf.log[:args.PrevLogIndex-1]
 				rf.persist()
 			} else {
 				reply.XIndex = -1
-				reply.XTerm = -1 // xterm 为-1表示不予置评
-				reply.XLen = len(rf.log)
+				reply.XTerm = -1         // xterm 为-1表示不予置评
+				reply.XLen = len(rf.log) // 2D todo
 			}
 			return
 		}
 
-		if rf.log[args.PrevLogIndex-1].CommandTerm == args.PrevLogTerm {
-			rf.log = rf.log[:args.PrevLogIndex]
+		if args.PrevLogIndex > rf.getLastLogIndex() && rf.logAt(args.PrevLogIndex).CommandTerm == args.PrevLogTerm {
+			rf.log = rf.truncateIncBefore(args.PrevLogIndex)
 		}
 	}
 
 	// 想一想这还用确认吗？对的，不需要！！无脑往自己的log里面放就完事了
 	// BUGPOINT 这里要怎么放？？应该从确认的那条记录开始往后放，也就是说《之前如果确认点后面有值那就得清空》
-	wantedIndex := 1
-	if len(rf.log) > 0 {
-		wantedIndex = rf.log[len(rf.log)-1].CommandIndex + 1
-	}
+	wantedIndex := rf.getLastLogIndex() + 1
 	for _, cmd := range args.Entries {
 		if cmd.CommandIndex == wantedIndex {
 			wantedIndex++
@@ -150,11 +147,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			return
 		}
 
-		lastNewIndex := rf.log[len(rf.log)-1].CommandIndex
-		finalCommitIndex := MinInt(lastNewIndex, args.LeaderCommit)
 		// BugPoint更新commitID之后是不是周期性的提交一下任务？？ 但是应该搞一个单独的协程
 		// 为什么commit的index  log里面都没有？
-		rf.commitIndex = finalCommitIndex
+		rf.commitIndex = MinInt(rf.getLastLogIndex(), args.LeaderCommit)
 		rf.apply()
 	}
 	rf.persist()
@@ -175,7 +170,11 @@ func (rf *Raft) LeaderRoutine() {
 				rf.mu.Unlock()
 				return
 			}
-			// 准备发送rpc
+			// 准备发送rpc，2D引入了snapshot如果要确认的都进了垃圾桶了，就不要appendentries了，直接发ss
+			if rf.lastIncludingIndex > 0 && rf.lastIncludingIndex >= rf.nextIndex[server]-1 {
+				rf.mu.Unlock()
+				return
+			}
 			args, reply := rf.GetReplicateArgsAndReply(server, false)
 			rf.mu.Unlock()
 
@@ -236,6 +235,7 @@ func (rf *Raft) LeaderRoutine() {
 				continue
 			}
 			if rf.matchIndex[j] >= i && rf.getLogTerm(i) == rf.currentTerm {
+				// 注意值commit 当前Term里面的command
 				matchCount++
 			}
 		}

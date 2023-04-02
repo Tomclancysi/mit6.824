@@ -19,6 +19,7 @@ package raft
 
 import (
 	"bytes"
+	"fmt"
 
 	"math/rand"
 	"sync"
@@ -114,26 +115,47 @@ type Raft struct {
 	matchIndex []int // 初始为0，已知的复制到改服务器上的log，应该是为了处理哪些掉队的成员
 
 	// my custom variable
-	lastHeartBeat int64
-	state         int
-	applyCond     *sync.Cond
+	lastHeartBeat      int64
+	state              int
+	applyCond          *sync.Cond
+	lastIncludingIndex int
+	lastIncludingTerm  int
 }
 
-// function get current time in millisecond
+// --** time function **--
 func getCurrentTime() int64 {
 	return time.Now().UnixNano() / 1e6
 }
 
-// help function for log
+// --** help function for log **--
+func (rf *Raft) truncateIncBefore(index int) []ApplyMsg {
+	index -= rf.lastIncludingIndex
+	return rf.log[:index]
+}
+
+func (rf *Raft) truncateAfter(index int) []ApplyMsg {
+	index -= rf.lastIncludingIndex
+	return rf.log[index:]
+}
+
 func (rf *Raft) getLastLogIndex() int {
 	if len(rf.log) == 0 {
-		return 0
+		return rf.lastIncludingIndex
 	} else {
 		return rf.log[len(rf.log)-1].CommandIndex
 	}
 }
 
+func (rf *Raft) getLastLogTerm() int {
+	if len(rf.log) == 0 {
+		return rf.lastIncludingTerm
+	} else {
+		return rf.log[len(rf.log)-1].CommandTerm
+	}
+}
+
 func (rf *Raft) getLogTerm(index int) int {
+	index -= rf.lastIncludingIndex
 	return rf.log[index-1].CommandTerm
 }
 
@@ -144,17 +166,25 @@ func (rf *Raft) applyLogs(logs []ApplyMsg) {
 }
 
 func (rf *Raft) logAt(index int) *ApplyMsg {
+	if index-rf.lastIncludingIndex < 1 {
+		panic(fmt.Sprintf("Maybe log has change to snapshot, visit Index=%v, lastIncludingIndex%v", index, rf.lastIncludingIndex))
+	}
+	index -= rf.lastIncludingIndex
 	return &rf.log[index-1]
 }
 
-// Leader initiate
+// --** raft state funciton **--
+
+type RaftState struct {
+	CurrentTerm        int
+	VoteFor            int
+	Log                []ApplyMsg
+	LastIncludingIndex int
+	LastIncludingTerm  int
+}
+
 func (rf *Raft) ReInitLeader() {
-	var nextIndex int
-	if len(rf.log) == 0 {
-		nextIndex = 1
-	} else {
-		nextIndex = rf.log[len(rf.log)-1].CommandIndex + 1
-	}
+	var nextIndex int = rf.getLastLogIndex() + 1
 	for i := 0; i < len(rf.peers); i++ {
 		rf.nextIndex[i] = nextIndex // 这俩啥意思
 		rf.matchIndex[i] = 0
@@ -174,25 +204,41 @@ func (rf *Raft) GetState() (int, bool) {
 	return term, isleader
 }
 
+func (rf *Raft) EncodeRaftStateSnapshot() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	raftstate := RaftState{
+		CurrentTerm:        rf.currentTerm,
+		VoteFor:            rf.votedFor,
+		Log:                rf.log,
+		LastIncludingIndex: rf.lastIncludingIndex,
+		LastIncludingTerm:  rf.lastIncludingTerm,
+	}
+	e.Encode(raftstate)
+	// e.Encode(rf.currentTerm)
+	// e.Encode(rf.votedFor)
+	// e.Encode(rf.log)
+	data := w.Bytes()
+	return data
+}
+
+func (rf *Raft) DecodeRaftStateSnapshot(raftstate []byte) RaftState {
+	r := bytes.NewBuffer(raftstate)
+	d := labgob.NewDecoder(r)
+
+	out := RaftState{}
+	if d.Decode(&out) != nil {
+		return out
+	} else {
+		panic("can not read state form bytes")
+	}
+}
+
 // save Raft's persistent state to stable storage,
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
 func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	e.Encode(rf.currentTerm)
-	e.Encode(rf.votedFor) // 为什么要把voteFor 放进去？
-	e.Encode(rf.log)
-	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
+	rf.persister.SaveRaftState(rf.EncodeRaftStateSnapshot())
 }
 
 // restore previously persisted state.
@@ -200,44 +246,12 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
-	r := bytes.NewBuffer(data)
-	d := labgob.NewDecoder(r)
-
-	var currentTerm int
-	var votedFor int
-	var log []ApplyMsg
-
-	if d.Decode(&currentTerm) != nil ||
-		d.Decode(&votedFor) != nil ||
-		d.Decode(&log) != nil {
-		return
-	} else {
-		rf.currentTerm = currentTerm
-		rf.votedFor = votedFor
-		rf.log = log
-	}
-}
-
-// A service wants to switch to snapshot.  Only do so if Raft hasn't
-// have more recent info since it communicate the snapshot on applyCh.
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-
-	// Your code here (2D).
-
-	return true
+	raftstate := rf.DecodeRaftStateSnapshot(data)
+	rf.currentTerm = raftstate.CurrentTerm
+	rf.votedFor = raftstate.VoteFor
+	rf.log = raftstate.Log
+	rf.lastIncludingIndex = raftstate.LastIncludingIndex
+	rf.lastIncludingTerm = raftstate.LastIncludingTerm
 }
 
 // the service says it has created a snapshot that has
@@ -246,7 +260,36 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
+	// snapshotTerm := rf.logAt(index).CommandTerm
+	// remove old log and 更新一些log相关的参数，这样访问才不会错
 
+	// zhuyi!!!!!!!!!!!snapshot是来自应用层的，是在应用层上面进行一次覆盖。
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	DPrintf("[Snapshot]Server [%v] snapshoting, lastSnapIndex=%v, currentSnapIndex=%v, ", rf.me, rf.lastIncludingIndex, index)
+	if index <= rf.lastIncludingIndex {
+		return
+	}
+
+	rf.lastIncludingTerm = rf.logAt(index).CommandTerm
+	rf.log = rf.truncateAfter(index)
+	rf.lastIncludingIndex = index // Dangerous
+
+	rf.persister.SaveStateAndSnapshot(rf.EncodeRaftStateSnapshot(), snapshot) // 其实这个snapshot指的是应用层的snapshot，而我的理解是state
+
+	// 在这个点直接截断，那么如果想要访问以前的数据就不可能了，那什么时候snapshot呢，如何让其他部分能够
+
+	// 似乎不需要对这个snapshot做什么操作啊
+
+	// 向每一个follower传输这个snapshot,不用rpc而是用管道传输的，snapshot如何传输给其他raft？ 还是需要实现一个RPC的
+	// go func() {
+	// 	rf.applyCh <- ApplyMsg{
+	// 		CommandValid:  false,
+	// 		SnapshotValid: true,
+	// 		Snapshot:      snapshot,
+	// 		SnapshotTerm:  snapshotTerm,
+	// 		SnapshotIndex: index}
+	// }()
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -272,7 +315,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	term := rf.currentTerm
-	nextIndex := len(rf.log) + 1 // 从1开始
+	nextIndex := rf.getLastLogIndex() + 1 // 从1开始
 	rf.log = append(rf.log, ApplyMsg{
 		CommandValid: true,
 		Command:      command,
@@ -354,6 +397,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastHeartBeat = getCurrentTime()
 	rf.state = Follower
 	rf.applyCond = sync.NewCond(&rf.mu)
+	rf.lastIncludingIndex = 0
 	// initialize from state persisted before a crash // 是不是要经常的persist
 	rf.readPersist(persister.ReadRaftState())
 
@@ -361,6 +405,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	go rf.ElectionTicker()
 	go rf.Ticker()
 	go rf.applier()
+	go rf.SnapshotTicker()
 	// go rf.CommandAgreementTicker()
 
 	return rf
