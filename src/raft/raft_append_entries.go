@@ -60,8 +60,8 @@ func (rf *Raft) GetReplicateArgsAndReply(server int, appendCMD bool) (AppendEntr
 	// impl1 ： nextIndex始终大于等于1，我需要验证它的上一条能否对齐
 	if rf.nextIndex[server]-1 > 0 { // 判断这条记录是否对应啊
 		args.PrevLogIndex = rf.nextIndex[server] - 1
-		args.PrevLogTerm = rf.logAt(args.PrevLogIndex).CommandTerm //rf.log[args.PrevLogIndex-1].CommandTerm
-		args.Entries = rf.truncateAfter(args.PrevLogIndex)         // rf.log[args.PrevLogIndex:] // 如果上一个index确认，发送这后面的即可
+		args.PrevLogTerm = rf.getLogTerm(args.PrevLogIndex) // BUGPOINT rf.logAt(args.PrevLogIndex).CommandTerm //rf.log[args.PrevLogIndex-1].CommandTerm
+		args.Entries = rf.truncateAfter(args.PrevLogIndex)  // rf.log[args.PrevLogIndex:] // 如果上一个index确认，发送这后面的即可
 	} else {
 		// 不需要验证
 		args.PrevLogIndex = 0
@@ -100,10 +100,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.PrevLogIndex > 0 {
 		// 需要确认,如果该位置没有值或者有值且不一样，删除该位置和它之后的log
 		if args.PrevLogIndex > rf.getLastLogIndex() ||
-			(args.PrevLogIndex > rf.lastIncludingIndex && rf.logAt(args.PrevLogIndex).CommandTerm != args.PrevLogTerm) { // this term is not commandterm. eeeeeee
+			(args.PrevLogIndex > rf.lastIncludingIndex && args.PrevLogIndex <= rf.getLastLogIndex() && rf.logAt(args.PrevLogIndex).CommandTerm != args.PrevLogTerm) { // this term is not commandterm. eeeeeee
 			reply.Success = false
 			reply.Conflict = true
-			if args.PrevLogIndex <= rf.getLastLogIndex() {
+			if args.PrevLogIndex > rf.lastIncludingIndex && args.PrevLogIndex <= rf.getLastLogIndex() {
 				xterm := rf.logAt(args.PrevLogIndex).CommandTerm
 				xindex := 0 // 2D todo 如果要支持snapshot，这里应该怎么改？
 				for i := args.PrevLogIndex - 1; i > 0 && i > rf.lastIncludingIndex; i-- {
@@ -120,13 +120,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				rf.persist()
 			} else {
 				reply.XIndex = -1
-				reply.XTerm = -1         // xterm 为-1表示不予置评
-				reply.XLen = len(rf.log) // 2D todo
+				reply.XTerm = -1                  // xterm 为-1表示不予置评
+				reply.XLen = rf.getLastLogIndex() // 2D todo
 			}
 			return
 		}
 
-		if args.PrevLogIndex > rf.getLastLogIndex() && rf.logAt(args.PrevLogIndex).CommandTerm == args.PrevLogTerm {
+		if args.PrevLogIndex > rf.lastIncludingIndex && args.PrevLogIndex <= rf.getLastLogIndex() && rf.logAt(args.PrevLogIndex).CommandTerm == args.PrevLogTerm {
 			rf.log = rf.truncateIncBefore(args.PrevLogIndex)
 		}
 	}
@@ -170,8 +170,11 @@ func (rf *Raft) LeaderRoutine() {
 				rf.mu.Unlock()
 				return
 			}
-			// 准备发送rpc，2D引入了snapshot如果要确认的都进了垃圾桶了，就不要appendentries了，直接发ss
-			if rf.lastIncludingIndex > 0 && rf.lastIncludingIndex >= rf.nextIndex[server]-1 {
+			// 准备发送rpc，2D引入了snapshot如果要确认的都进了垃圾桶了，就不要appendentries了。但是应该发送snapshot
+			if rf.lastIncludingIndex > 0 && rf.lastIncludingIndex > rf.nextIndex[server]-1 {
+				// 如果要验证的已经snapshot了，这tm就死锁了。 2D这里应该是小于
+				// 可以像applier一样把snapshot协程阻塞住，然后此时让他发送一次
+				rf.sendSnapshotToServer(server)
 				rf.mu.Unlock()
 				return
 			}
@@ -207,8 +210,13 @@ func (rf *Raft) LeaderRoutine() {
 								if xterm < 0 {
 									rf.nextIndex[server] = reply.XLen // 直接检查最后一条
 								} else {
+									// 由于引入了snapshot，不要在意过往了
+									if args.PrevLogIndex <= rf.lastIncludingIndex {
+										rf.mu.Unlock()
+										return
+									}
 									curIndex := args.PrevLogIndex - 1
-									for ; curIndex > xindex && curIndex > 0; curIndex-- {
+									for ; curIndex > xindex && curIndex > rf.lastIncludingIndex; curIndex-- {
 										if rf.getLogTerm(curIndex) == xterm {
 											break
 										}

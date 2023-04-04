@@ -95,6 +95,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	// if len(snapshot) == 0 {
 	// 	return
 	// }
+	rf.resetElectionTimer()
 	if args.LastIncludedIndex == 0 {
 		return
 	}
@@ -119,6 +120,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	defer rf.mu.Unlock()
 	// Your code here (2D).
 	// 判断是否要接受leader传来的snapshot
+	DPrintf("[CondInstallSnapshot]Sever <%v> will install log before <%v>", rf.me, lastIncludedIndex)
 	if lastIncludedIndex <= rf.lastIncludingIndex {
 		return false
 	}
@@ -128,12 +130,9 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		tempLog = append(tempLog, *rf.logAt(i))
 	}
 
-	// will install log
-	DPrintf("Sever %v will install log at %v", rf.me, lastIncludedIndex)
-
 	// page12 rule 1, if contain new log, discard self log and use the entire snapshot
-	if lastIncludedIndex > rf.getLastLogIndex() {
-		// 全部接受
+	if lastIncludedIndex > rf.getLastLogIndex() || rf.logAt(lastIncludedIndex).CommandTerm != lastIncludedTerm {
+		// 全部接受，丢弃所有历史
 		rf.log = []ApplyMsg{}
 		rf.commitIndex = MaxInt(rf.commitIndex, lastIncludedIndex)
 		rf.lastApplied = MaxInt(rf.lastApplied, lastIncludedIndex)
@@ -143,9 +142,12 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		return true
 	}
 
-	// rule2 如果都是老东西，说明这些老东西需要进垃圾桶了
+	// rule2 保存后面的部分，并清除掉历史的log
 	rf.log = tempLog
-
+	rf.commitIndex = MaxInt(rf.commitIndex, lastIncludedIndex)
+	rf.lastApplied = MaxInt(rf.lastApplied, lastIncludedIndex)
+	rf.lastIncludingIndex = lastIncludedIndex
+	rf.lastIncludingTerm = lastIncludedTerm
 	rf.persist()
 	return false
 }
@@ -196,6 +198,49 @@ func (rf *Raft) sendSnapshotRountine() {
 			rf.mu.Unlock()
 		}()
 	}
+}
+
+func (rf *Raft) sendSnapshotToServer(curServer int) {
+	go func() {
+		rf.mu.Lock()
+		DPrintf("Server %v will send snapshot %v to Follower%v", rf.me, rf.lastIncludingIndex, curServer)
+		args := InstallSnapshotArgs{
+			Term:              rf.currentTerm,
+			LeaderId:          rf.me,
+			LastIncludedIndex: rf.lastIncludingIndex,
+			LastIncludedTerm:  rf.lastIncludingTerm,
+			Data:              rf.persister.ReadSnapshot(),
+			Done:              false,
+		}
+		reply := InstallSnapshotReply{}
+		rf.mu.Unlock()
+
+		ok := rf.sendInstallSnapshot(curServer, &args, &reply)
+		if !ok {
+			return
+		}
+
+		rf.mu.Lock()
+		// check rpc timeout
+		if rf.currentTerm != args.Term || rf.state != Leader {
+			rf.mu.Unlock()
+			return
+		}
+		if reply.Term > rf.currentTerm {
+			rf.state = Follower
+			rf.votedFor = -1
+			rf.persist()
+			rf.resetElectionTimer()
+			rf.mu.Unlock()
+			return
+		}
+		// 发送snapshot可以替代appendEntries快速更新那个数据结构
+		DPrintf("Server %v have sended snapshot %v to Follower%v, the nextindex change from %v, to %v", rf.me, rf.lastIncludingIndex, curServer, rf.nextIndex[curServer], args.LastIncludedIndex+1)
+		rf.nextIndex[curServer] = MaxInt(args.LastIncludedIndex+1, rf.nextIndex[curServer])
+		rf.matchIndex[curServer] = MaxInt(args.LastIncludedIndex, rf.matchIndex[curServer])
+
+		rf.mu.Unlock()
+	}()
 }
 
 func (rf *Raft) SnapshotTicker() {

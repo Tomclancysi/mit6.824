@@ -155,6 +155,9 @@ func (rf *Raft) getLastLogTerm() int {
 }
 
 func (rf *Raft) getLogTerm(index int) int {
+	if index == rf.lastIncludingIndex {
+		return rf.lastIncludingTerm
+	}
 	index -= rf.lastIncludingIndex
 	return rf.log[index-1].CommandTerm
 }
@@ -227,7 +230,7 @@ func (rf *Raft) DecodeRaftStateSnapshot(raftstate []byte) RaftState {
 	d := labgob.NewDecoder(r)
 
 	out := RaftState{}
-	if d.Decode(&out) != nil {
+	if d.Decode(&out) == nil {
 		return out
 	} else {
 		panic("can not read state form bytes")
@@ -266,7 +269,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// zhuyi!!!!!!!!!!!snapshot是来自应用层的，是在应用层上面进行一次覆盖。
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("[Snapshot]Server [%v] snapshoting, lastSnapIndex=%v, currentSnapIndex=%v, ", rf.me, rf.lastIncludingIndex, index)
+	DPrintf("[SavingSnapshot]Server [%v] snapshoting, lastSnapIndex=%v, currentSnapIndex=%v", rf.me, rf.lastIncludingIndex, index)
 	if index <= rf.lastIncludingIndex {
 		return
 	}
@@ -396,7 +399,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// my custom variable
 	rf.lastHeartBeat = getCurrentTime()
 	rf.state = Follower
-	rf.applyCond = sync.NewCond(&rf.mu)
+	rf.applyCond = sync.NewCond(&rf.mu) // 果然如我所料，这里condition variable需要锁对象，这样wait的时候采能释放对应的锁。
 	rf.lastIncludingIndex = 0
 	// initialize from state persisted before a crash // 是不是要经常的persist
 	rf.readPersist(persister.ReadRaftState())
@@ -405,8 +408,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	go rf.ElectionTicker()
 	go rf.Ticker()
 	go rf.applier()
-	go rf.SnapshotTicker()
-	// go rf.CommandAgreementTicker()
+	// go rf.SnapshotTicker()
 
 	return rf
 }
@@ -416,10 +418,12 @@ func (rf *Raft) apply() {
 }
 
 func (rf *Raft) applier() {
+	// 这个applier写的不够好，需要学习一下(这个大佬)[https://github.com/OneSizeFitsQuorum/MIT6.824-2021/blob/master/docs/lab2.md#%E5%BC%82%E6%AD%A5-applier-%E7%9A%84-exactly-once]，在不可靠的系统中，如何让一个命令只执行一次
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	for !rf.killed() {
+		// 2D改了这里也要改
 		if rf.commitIndex > rf.lastApplied && rf.getLastLogIndex() > rf.lastApplied {
 			rf.lastApplied++
 			applyMsg := ApplyMsg{

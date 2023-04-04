@@ -249,7 +249,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			cfg.lastApplied[i] = m.CommandIndex
 			cfg.mu.Unlock()
 
-			if (m.CommandIndex+1)%SnapShotInterval == 0 {
+			if (m.CommandIndex)%SnapShotInterval == 0 {
 				w := new(bytes.Buffer)
 				e := labgob.NewEncoder(w)
 				e.Encode(m.CommandIndex)
