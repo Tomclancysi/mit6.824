@@ -249,7 +249,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			cfg.lastApplied[i] = m.CommandIndex
 			cfg.mu.Unlock()
 
-			if (m.CommandIndex+1)%SnapShotInterval == 0 {
+			if (m.CommandIndex)%SnapShotInterval == 0 {
 				w := new(bytes.Buffer)
 				e := labgob.NewEncoder(w)
 				e.Encode(m.CommandIndex)
@@ -561,10 +561,11 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 // if retry==false, calls Start() only once, in order
 // to simplify the early Lab 2B tests.
 func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
+	// 共识一整个command
 	t0 := time.Now()
 	starts := 0
 	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
-		// try all the servers, maybe one is the leader.
+		// 注意这是个循环，可能多次尝试执行一条指令，但是这显然不太正确的，Start应该检查cmd是不是已经提交过
 		index := -1
 		for si := 0; si < cfg.n; si++ {
 			starts = (starts + 1) % cfg.n
@@ -585,12 +586,12 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		// 先通过Start发送给Leader 然后给每个人
 
 		if index != -1 {
-			// somebody claimed to be the leader and to have
-			// submitted our command; wait a while for agreement.
+			// 有leader 响应了这个请求，等待它的结果。
+
 			t1 := time.Now()
-			for time.Since(t1).Seconds() < 2 {
+			for time.Since(t1).Seconds() < 2 { // 检查commited的节点个数是否满足要求？
 				nd, cmd1 := cfg.nCommitted(index)
-				// DPrintf("[System] number<%v> of cmd<%v>\n", nd, cmd1)
+
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
